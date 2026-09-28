@@ -6,11 +6,13 @@ fetches per Signature-Agent origin to go from simulated to real.
 """
 import json
 import os
+from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from config import REGISTRY_DIR
 from keys import b64url_decode, public_key_to_jwk
 
-REGISTRY_DIR = "/home/claude/webbotauth/registry"
+REGISTRY_DIR = str(REGISTRY_DIR)
 
 
 def register_agent(name: str, public_key: Ed25519PublicKey):

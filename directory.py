@@ -7,6 +7,7 @@ here with a directory-signing key, kept separate from per-request keys.
 """
 import json
 import time
+from config import AGENT_KEY_PATH
 from keys import (
     generate_keypair,
     keyid_for,
@@ -48,7 +49,7 @@ def sign_directory(private_key, body: bytes) -> dict:
 
 
 if __name__ == "__main__":
-    priv = load_private_key("/home/claude/webbotauth/agent")
+    priv = load_private_key(str(AGENT_KEY_PATH))
     body = build_directory_body([priv.public_key()])
     headers = sign_directory(priv, body)
     print(headers["Content-Type"])

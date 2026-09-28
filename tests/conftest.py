@@ -6,9 +6,11 @@ fixtures could bleed into the next test and produce a spurious replay
 failure that has nothing to do with what that test is actually checking.
 """
 import sys
+from pathlib import Path
+
 import pytest
 
-sys.path.insert(0, "/home/claude/webbotauth")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import analytics
 import registry

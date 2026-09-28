@@ -6,7 +6,9 @@ under conditions we control exactly (we know the ground truth because
 we constructed the sightings ourselves).
 """
 import sys
-sys.path.insert(0, "/home/claude/webbotauth")
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import analytics
 

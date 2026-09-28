@@ -6,7 +6,9 @@ transport.
 """
 import time
 import sys
-sys.path.insert(0, "/home/claude/webbotauth")
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from signer import sign_request
 import verifier

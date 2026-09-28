@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 from cryptography.exceptions import InvalidSignature
 
+from config import AGENT_KEY_PATH
 from keys import b64url_decode, load_private_key
 from directory import build_directory_body, sign_directory, DIRECTORY_PATH
 from registry import load_registry
@@ -34,7 +35,7 @@ _seen_nonces = set()  # (keyid, sig_b64) -> replay guard
 def _get_dir_priv():
     global _DIR_PRIV
     if _DIR_PRIV is None:
-        _DIR_PRIV = load_private_key("/home/claude/webbotauth/agent")
+        _DIR_PRIV = load_private_key(str(AGENT_KEY_PATH))
     return _DIR_PRIV
 
 

@@ -17,6 +17,7 @@ real Web Bot Auth accepts that ambiguity and relies on short expiry instead.
 import os
 import time
 from urllib.parse import urlparse
+from config import AGENT_KEY_PATH
 from keys import keyid_for, b64url, load_private_key
 
 
@@ -56,7 +57,7 @@ def sign_request(private_key, method: str, url: str, signature_agent: str) -> di
 
 
 if __name__ == "__main__":
-    priv = load_private_key("/home/claude/webbotauth/agent")
+    priv = load_private_key(str(AGENT_KEY_PATH))
     headers = sign_request(
         priv,
         method="GET",

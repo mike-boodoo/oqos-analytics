@@ -10,43 +10,41 @@ agents so the harvester has something to count:
 5. Print the harvest report
 """
 import os
-import sys
 import time
 import threading
+import shutil
+
 import requests
 
-sys.path.insert(0, "/home/claude/webbotauth")
-
-# clean slate for a repeatable demo run
-for f in ("harvest.db",):
-    p = f"/home/claude/webbotauth/{f}"
-    if os.path.exists(p):
-        os.remove(p)
-import shutil
-shutil.rmtree("/home/claude/webbotauth/registry", ignore_errors=True)
-
+from config import AGENT_KEY_PATH, DATA_DIR, REGISTRY_DIR
 from keys import generate_keypair, save_keypair, load_private_key, keyid_for
 from registry import register_agent
+
+# clean slate for a repeatable demo run
+for f in (DATA_DIR / "harvest.db",):
+    if f.exists():
+        f.unlink()
+if REGISTRY_DIR.exists():
+    shutil.rmtree(REGISTRY_DIR, ignore_errors=True)
 
 PORT = 8088
 BASE = f"http://localhost:{PORT}"
 AGENTS = ["alice", "bob", "carol"]
 
-# verifier.py loads /home/claude/webbotauth/agent.priv at IMPORT time
-# (it plays the role of a site that already has its own signing key),
-# so every identity -- including the verifier's own -- has to exist on
-# disk before `import verifier` runs below.
+# verifier.py loads the repo-local agent key at import time, so every
+# identity -- including the verifier's own -- has to exist on disk before
+# `import verifier` runs below.
 print("== 1. generating identities + a directory-signing key ==")
 priv_keys = {}
 for name in AGENTS:
     _priv, _pub = generate_keypair()
-    save_keypair(_priv, f"/home/claude/webbotauth/{name}")
+    save_keypair(_priv, str(DATA_DIR / name))
     register_agent(name, _pub)
     priv_keys[name] = _priv
     print(f"  {name}: keyid {keyid_for(_pub)[:16]}...")
 
 _dir_priv, _dir_pub = generate_keypair()
-save_keypair(_dir_priv, "/home/claude/webbotauth/agent")
+save_keypair(_dir_priv, str(AGENT_KEY_PATH))
 
 import verifier
 from signer import sign_request

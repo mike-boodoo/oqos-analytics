@@ -14,6 +14,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from cryptography.hazmat.primitives import serialization
 
+from config import AGENT_KEY_PATH
+
 
 def b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
@@ -71,6 +73,6 @@ def load_private_key(path_prefix: str) -> Ed25519PrivateKey:
 
 if __name__ == "__main__":
     priv, pub = generate_keypair()
-    save_keypair(priv, "/home/claude/webbotauth/agent")
-    print("Generated agent keypair -> agent.priv / agent.pub.json")
+    save_keypair(priv, str(AGENT_KEY_PATH))
+    print(f"Generated agent keypair -> {AGENT_KEY_PATH}.priv / {AGENT_KEY_PATH}.pub.json")
     print(json.dumps(public_key_to_jwk(pub), indent=2))

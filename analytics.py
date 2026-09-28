@@ -12,7 +12,9 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
-DB_PATH = "/home/claude/webbotauth/harvest.db"
+from config import DB_PATH
+
+DB_PATH = str(DB_PATH)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sightings (
@@ -39,7 +41,10 @@ CREATE INDEX IF NOT EXISTS idx_ts ON sightings(ts);
 
 @contextmanager
 def _conn():
-    c = sqlite3.connect(DB_PATH)
+    db_path = DB_PATH
+    parent = __import__("pathlib").Path(db_path).parent
+    parent.mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(db_path)
     try:
         yield c
     finally:

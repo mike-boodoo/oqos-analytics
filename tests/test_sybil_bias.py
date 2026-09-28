@@ -7,7 +7,9 @@ current code, so 'this is a risk' is backed by a reproducible case
 rather than left as a paragraph of prose.
 """
 import sys
-sys.path.insert(0, "/home/claude/webbotauth")
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import analytics
 from keys import generate_keypair
