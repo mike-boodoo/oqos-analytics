@@ -1,4 +1,4 @@
-# Agentic Field Dashboard
+# OQOS Analytics dashboard 
 
 A minimal, dependency-light implementation of the same protocols using (RFC 9421 HTTP Message Signatures + ed25519), running
 entirely on your own machine — no CDN, no vendor, no account.
