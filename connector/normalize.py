@@ -13,9 +13,10 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
-# Reuse the verifier's own defensive parser so ingested rows are parsed
-# identically to live ones (it returns None on a malformed header).
-from verifier import _parse_sig_input
+# Parse signature params identically to live verification. sigparse reuses
+# the verifier's own parser when oqos-analytics is present, else a vendored
+# copy -- so this package is portable to a standalone repo.
+from .sigparse import parse_sig_input as _parse_sig_input
 
 CANON_COLUMNS = (
     "ts", "remote_addr", "method", "path", "authority", "verified", "reason",

@@ -14,7 +14,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-import analytics
+from . import store
 from .normalize import normalize, sig_fields_of
 from .sources import Source
 
@@ -40,7 +40,7 @@ class IngestWriter:
 
     @property
     def db_path(self) -> str:
-        return str(self._db_path if self._db_path is not None else analytics.DB_PATH)
+        return str(self._db_path if self._db_path is not None else store.db_path())
 
     def _side_conn(self) -> sqlite3.Connection:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -51,8 +51,8 @@ class IngestWriter:
     def init(self):
         # ensure both the sightings schema and our side tables exist
         if self._db_path is not None:
-            analytics.DB_PATH = self.db_path
-        analytics.init_db()
+            store.set_db_path(self.db_path)
+        store.init_db()
         self._side_conn().close()
 
     def _seen(self, c, fp: str) -> bool:
@@ -66,7 +66,7 @@ class IngestWriter:
         fp = row["fingerprint"]
         if self._seen(c, fp):
             return False
-        analytics.record_sighting(
+        store.record_sighting(
             remote_addr=row["remote_addr"], method=row["method"], path=row["path"],
             authority=row["authority"], verified=row["verified"], reason=row["reason"],
             sig_fields=sig_fields_of(row), signature_agent=row["signature_agent"],
@@ -83,7 +83,7 @@ class IngestWriter:
         """Run a source to completion. Returns {read, inserted, skipped}."""
         self.init()
         if self._db_path is not None:
-            analytics.DB_PATH = self.db_path
+            store.set_db_path(self.db_path)
         read = inserted = skipped = 0
         latest_ts = None
         c = self._side_conn()
@@ -111,7 +111,7 @@ class IngestWriter:
     def status(self) -> dict:
         self.init()
         if self._db_path is not None:
-            analytics.DB_PATH = self.db_path
+            store.set_db_path(self.db_path)
         c = self._side_conn()
         try:
             cursors = {
@@ -124,7 +124,7 @@ class IngestWriter:
         return {
             "db_path": self.db_path,
             "ingested_rows": ingested,
-            "total_sightings": analytics.total_sightings(),
-            "attributable_agents": analytics.unique_agents(),
+            "total_sightings": store.total_sightings(),
+            "attributable_agents": store.unique_agents(),
             "cursors": cursors,
         }

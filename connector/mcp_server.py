@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import sys
 
-import analytics
+from . import store
 from .export import export_sightings
 from .normalize import normalize, RawRecord
 from .sources import FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource
@@ -72,7 +72,7 @@ TOOLS = [
 
 def _apply_db(args):
     if args.get("db"):
-        analytics.DB_PATH = args["db"]
+        store.set_db_path(args["db"])
 
 
 def _tool_ingest(args):

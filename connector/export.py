@@ -7,34 +7,15 @@ explorer build helper, so there is one definition of the wire format.
 from __future__ import annotations
 
 import json
-import sqlite3
 
-import analytics
+from . import store
 
-EXPORT_COLUMNS = (
-    "ts", "remote_addr", "path", "authority", "verified", "reason",
-    "keyid", "alg", "tag", "created", "expires", "signature_agent", "user_agent",
-)
+EXPORT_COLUMNS = store.EXPORT_COLUMNS
 
 
 def export_sightings(db_path: str | None = None, limit: int | None = None) -> list[dict]:
-    if db_path:
-        analytics.DB_PATH = db_path
-    analytics.init_db()
-    c = sqlite3.connect(str(analytics.DB_PATH))
-    c.row_factory = sqlite3.Row
-    q = f"SELECT {','.join(EXPORT_COLUMNS)} FROM sightings ORDER BY ts"
-    if limit:
-        q += f" LIMIT {int(limit)}"
-    rows = []
-    try:
-        for r in c.execute(q):
-            d = dict(r)
-            d["verified"] = bool(d["verified"])
-            rows.append(d)
-    finally:
-        c.close()
-    return rows
+    store.set_db_path(db_path)
+    return store.export_rows(limit=limit)
 
 
 def write_export(path: str, db_path: str | None = None) -> int:

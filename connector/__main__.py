@@ -19,7 +19,7 @@ import json
 import sys
 from dataclasses import fields as _dc_fields
 
-import analytics
+from . import store
 from .export import export_sightings, write_export
 from .sources import (
     FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource, StreamSource,
@@ -30,7 +30,7 @@ from .writer import IngestWriter
 
 def _apply_db(db):
     if db:
-        analytics.DB_PATH = db
+        store.set_db_path(db)
 
 
 def _field_map_from_arg(arg: str | None, base: FieldMap) -> FieldMap:
@@ -102,15 +102,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", help="harvest DB path (default: analytics.DB_PATH)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    ing = sub.add_parser("ingest", help="ingest from a source")
-    ing.add_argument("--source", required=True,
-                     choices=["access-log", "cloudflare", "generic", "stream"])
-    ing.add_argument("--path", help="input file (JSON / JSON-lines / combined log); '-' or omitted for generic/stream reads NDJSON from stdin")
-    ing.add_argument("--url", help="cloudflare: fetch newline-delimited JSON from this URL")
-    ing.add_argument("--token", help="cloudflare: bearer token for --url")
-    ing.add_argument("--authority", help="access-log: Host to attribute (combined logs omit it)")
-    ing.add_argument("--map", help="generic: field overrides, e.g. ts=time,remote_addr=ip")
+    def add_source_args(sp, with_stream=True):
+        choices = ["access-log", "cloudflare", "generic"] + (["stream"] if with_stream else [])
+        sp.add_argument("--source", required=True, choices=choices)
+        sp.add_argument("--path", help="input file (JSON / JSON-lines / combined log); '-' or omitted for generic/stream reads NDJSON from stdin")
+        sp.add_argument("--url", help="cloudflare: fetch newline-delimited JSON from this URL")
+        sp.add_argument("--token", help="cloudflare: bearer token for --url")
+        sp.add_argument("--authority", help="access-log: Host to attribute (combined logs omit it)")
+        sp.add_argument("--map", help="generic: field overrides, e.g. ts=time,remote_addr=ip")
+
+    ing = sub.add_parser("ingest", help="ingest from a source (one pass)")
+    add_source_args(ing)
     ing.set_defaults(func=cmd_ingest)
+
+    pl = sub.add_parser("poll", help="run as a daemon: re-fetch a source on an interval")
+    add_source_args(pl, with_stream=False)
+    pl.add_argument("--interval", type=float, default=60.0, help="seconds between fetches (default 60)")
+    pl.add_argument("--once", action="store_true", help="fetch a single time and exit")
+    pl.set_defaults(func=cmd_poll)
 
     st = sub.add_parser("status", help="show ingest state")
     st.set_defaults(func=cmd_status)
@@ -134,6 +143,27 @@ def cmd_webhook(args):
     fm = _field_map_from_arg(args.map, FieldMap(source="webhook"))
     run_webhook(host=args.host, port=args.port, field_map=fm, token=args.token,
                 db_path=args.db, path=args.path)
+
+
+def cmd_poll(args):
+    """Daemon mode: rebuild the source each cycle (re-fetching a URL/file) and
+    ingest; the idempotent fingerprint means already-seen rows are skipped, so
+    re-fetching an overlapping window is safe."""
+    import time
+    _apply_db(args.db)
+    writer = IngestWriter(db_path=args.db)
+    while True:
+        try:
+            result = writer.ingest(_build_source(args), source_name=args.source)
+            print(json.dumps({"at": time.time(), "source": args.source, **result}), flush=True)
+        except Exception as e:  # keep the daemon alive across transient fetch errors
+            print(json.dumps({"at": time.time(), "source": args.source, "error": str(e)}), flush=True)
+        if args.once:
+            break
+        try:
+            time.sleep(args.interval)
+        except KeyboardInterrupt:
+            break
 
 
 def main(argv=None):

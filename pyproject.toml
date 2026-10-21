@@ -1,0 +1,25 @@
+# Packaging for the ingest connector as a standalone, installable service.
+# It targets only the `connector` package, which is self-contained: it
+# reuses oqos-analytics when importable and falls back to a vendored store
+# and signature parser otherwise, so it can be lifted into its own repo
+# (the OQOS connector) unchanged.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oqos-connector"
+version = "0.1.0"
+description = "Ingest real Web Bot Auth (RFC 9421) request logs into a sightings store."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+# only needed to fetch logs from an HTTP(S) URL (e.g. Cloudflare Logpush)
+url = ["requests>=2.28"]
+
+[project.scripts]
+oqos-connector = "connector.__main__:main"
+
+[tool.setuptools]
+packages = ["connector"]

@@ -159,6 +159,32 @@ The same core is exposed as a dependency-light MCP server
 (`python -m connector.mcp_server`) with tools `ingest_logs`,
 `connector_status`, `preview_normalize`, and `export_snapshot`.
 
+### Running as a service
+
+`ingest` is a single pass; `poll` is the daemon form — it re-fetches a
+source on an interval and relies on the idempotent fingerprint to skip
+rows it has already seen:
+
+```bash
+python -m connector poll --source cloudflare --url "$URL" --token "$CF_TOKEN" --interval 300
+```
+
+`serve-webhook` is the push form (an HTTP endpoint). Both run under the
+packaged console script (`pip install .` → `oqos-connector …`) or the
+container image (`connector/Dockerfile`), with the DB path set by
+`OQOS_DB_PATH`.
+
+### Portability (standalone / the OQOS connector repo)
+
+The `connector/` package is self-contained. It talks to the harvest store
+only through `connector/store.py` and parses signatures only through
+`connector/sigparse.py`; both reuse oqos-analytics (`analytics`,
+`verifier`) when importable and fall back to a vendored, identical SQLite
+store and parser when it isn't. So the package can be lifted into its own
+repo unchanged — `pyproject.toml` builds exactly `connector` as
+`oqos-connector`. Only the live data source has to be supplied; the code
+needs nothing else from this repo.
+
 ### The agent explorer
 
 `explorer/agent-explorer.html` is a standalone, single-file UI for
