@@ -278,3 +278,34 @@ class CloudflareSource:
             objs = list(self._data or [])
         for obj in objs:
             yield self.field_map.record(obj)
+
+
+class StreamSource:
+    """
+    A streaming source: maps an *iterable of raw JSON dicts* through a
+    FieldMap. The iterable can be a list, a generator, or a callable that
+    returns one -- so a Kafka/Kinesis/Pub-Sub consumer poll loop, or a
+    `tail -f` / `kafkacat` pipe decoded to dicts, is wired in by writing a
+    short generator that yields records; this adapter maps them and the
+    writer ingests them as they arrive.
+
+        def poll():                       # your consumer
+            while True:
+                for msg in consumer.poll():
+                    yield json.loads(msg.value)
+        IngestWriter().ingest(StreamSource(poll, field_map=FieldMap.cloudflare()))
+
+    Records are consumed lazily, so an unbounded stream ingests row by row
+    rather than being buffered first.
+    """
+
+    def __init__(self, records_iterable, *, field_map: FieldMap | None = None):
+        self.field_map = field_map or FieldMap(source="stream")
+        self._it = records_iterable
+
+    def records(self) -> Iterator[RawRecord]:
+        src = self._it() if callable(self._it) else self._it
+        for obj in src:
+            if obj is None:
+                continue
+            yield self.field_map.record(obj)

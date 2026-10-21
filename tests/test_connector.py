@@ -14,10 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import analytics
 from connector.normalize import normalize, RawRecord
 from connector.sources import (
-    FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource, to_epoch,
+    FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource, StreamSource, to_epoch,
 )
 from connector.writer import IngestWriter
 from connector.export import export_sightings
+from connector.webhook import ingest_body, run_webhook
 from connector import mcp_server
 
 
@@ -140,6 +141,71 @@ def test_export_sightings_shape_matches_explorer(isolated_store):
     # exactly the columns the explorer / dashboard read
     assert set(r) == {"ts", "remote_addr", "path", "authority", "verified", "reason",
                       "keyid", "alg", "tag", "created", "expires", "signature_agent", "user_agent"}
+
+
+# ---- streaming + webhook -------------------------------------------------
+def _generic_record(ts=1792590051):
+    return {"ts": ts, "remote_addr": "203.0.113.5", "method": "GET", "path": "/whoami",
+            "host": "shop.example", "user_agent": "acme/1.0",
+            "signature_input": SIG_INPUT, "signature": SIG,
+            "signature_agent": "https://acme.example", "verified": True}
+
+
+def test_stream_source_from_generator_maps_records():
+    def gen():
+        yield _generic_record(1792590051)
+        yield None                      # gaps in a stream are skipped
+        yield _generic_record(1792590060)
+    rows = [normalize(r) for r in StreamSource(gen(), field_map=FieldMap()).records()]
+    assert len(rows) == 2 and all(r["keyid"] == "REALKEYID_abc123" for r in rows)
+
+
+def test_stream_source_ingests_and_is_idempotent(isolated_store):
+    batch = [_generic_record(1792590051), _generic_record(1792590060)]
+    w = IngestWriter()
+    fm = FieldMap(source="stream", verified="verified")  # map the verdict field
+    first = w.ingest(StreamSource(list(batch), field_map=fm), source_name="stream")
+    second = w.ingest(StreamSource(list(batch), field_map=fm), source_name="stream")
+    assert first["inserted"] == 2 and second["inserted"] == 0 and second["skipped"] == 2
+    assert analytics.unique_agents() == 1
+
+
+def test_webhook_ingest_body_parses_array_and_ndjson(isolated_store):
+    w = IngestWriter()
+    fm = FieldMap(verified="verified")
+    arr = json.dumps([_generic_record(1792590051), _generic_record(1792590060)]).encode()
+    assert ingest_body(arr, fm, w, source_name="webhook")["inserted"] == 2
+    ndjson = (json.dumps(_generic_record(1792590070)) + "\n").encode()
+    assert ingest_body(ndjson, fm, w)["inserted"] == 1
+    assert analytics.total_sightings() == 3
+
+
+def test_webhook_server_round_trip_with_token(isolated_store):
+    import threading, urllib.request, urllib.error
+    from connector.webhook import make_handler
+    from http.server import ThreadingHTTPServer
+    db = str(analytics.DB_PATH)
+    port = 8911
+    w = IngestWriter(db_path=db); w.init()
+    httpd = ThreadingHTTPServer(("127.0.0.1", port),
+                                make_handler(FieldMap(source="webhook", verified="verified"), "s3cret", w, "/ingest"))
+    t = threading.Thread(target=httpd.serve_forever, daemon=True); t.start()
+    try:
+        body = json.dumps([_generic_record(1792590051)]).encode()
+        # missing token -> 401
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/ingest", data=body, method="POST")
+        try:
+            urllib.request.urlopen(req); assert False, "expected 401"
+        except urllib.error.HTTPError as e:
+            assert e.code == 401
+        # with token -> 200 and one insert
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/ingest", data=body,
+                                     method="POST", headers={"Authorization": "Bearer s3cret"})
+        resp = json.loads(urllib.request.urlopen(req).read())
+        assert resp["inserted"] == 1
+    finally:
+        httpd.shutdown(); httpd.server_close()
+    assert analytics.unique_agents() == 1
 
 
 # ---- MCP server surface --------------------------------------------------

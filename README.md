@@ -139,6 +139,22 @@ python -m connector status                     # rows ingested, per-source curso
 python -m connector export-json --out snap.json  # sightings as explorer/dashboard JSON
 ```
 
+Streaming and push are supported too, for live feeds rather than files:
+
+```bash
+# a live NDJSON pipe (Kafka/Kinesis consumer, tail -f, kafkacat, …)
+kafkacat -C -t requests | python -m connector ingest --source stream --map verified=verified
+
+# an HTTP endpoint that ingests pushed batches (Logpush to HTTP, a shipper)
+python -m connector serve-webhook --port 8900 --token "$SECRET" --map ts=time,remote_addr=ip
+# then POST a JSON array / NDJSON / object to http://host:8900/ingest
+```
+
+A Kafka/Kinesis/Pub-Sub consumer is wired in by writing a short generator
+that yields record dicts and handing it to `StreamSource`; the writer
+ingests lazily as records arrive. Pushed/streamed rows are de-duplicated
+by the same fingerprint as file ingests.
+
 The same core is exposed as a dependency-light MCP server
 (`python -m connector.mcp_server`) with tools `ingest_logs`,
 `connector_status`, `preview_normalize`, and `export_snapshot`.

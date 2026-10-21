@@ -21,7 +21,10 @@ from dataclasses import fields as _dc_fields
 
 import analytics
 from .export import export_sightings, write_export
-from .sources import FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource
+from .sources import (
+    FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource, StreamSource,
+)
+from .webhook import run_webhook
 from .writer import IngestWriter
 
 
@@ -45,6 +48,15 @@ def _field_map_from_arg(arg: str | None, base: FieldMap) -> FieldMap:
     return base
 
 
+def _stdin_ndjson():
+    """Yield one JSON object per non-blank stdin line, as it arrives -- so a
+    `tail -f` / `kafkacat` pipe streams in row by row."""
+    for line in sys.stdin:
+        line = line.strip()
+        if line:
+            yield json.loads(line)
+
+
 def _build_source(args):
     if args.source == "access-log":
         if args.path and args.path.endswith((".json", ".jsonl", ".ndjson")):
@@ -54,7 +66,12 @@ def _build_source(args):
         return CloudflareSource(path=args.path, url=args.url, token=args.token)
     if args.source == "generic":
         fm = _field_map_from_arg(args.map, FieldMap(source="generic"))
+        if args.path in (None, "-"):
+            return StreamSource(_stdin_ndjson(), field_map=fm)
         return JsonRecordSource(path=args.path, field_map=fm)
+    if args.source == "stream":
+        fm = _field_map_from_arg(args.map, FieldMap(source="stream"))
+        return StreamSource(_stdin_ndjson(), field_map=fm)
     raise SystemExit(f"unknown source: {args.source}")
 
 
@@ -86,8 +103,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     ing = sub.add_parser("ingest", help="ingest from a source")
-    ing.add_argument("--source", required=True, choices=["access-log", "cloudflare", "generic"])
-    ing.add_argument("--path", help="input file (JSON / JSON-lines / combined log)")
+    ing.add_argument("--source", required=True,
+                     choices=["access-log", "cloudflare", "generic", "stream"])
+    ing.add_argument("--path", help="input file (JSON / JSON-lines / combined log); '-' or omitted for generic/stream reads NDJSON from stdin")
     ing.add_argument("--url", help="cloudflare: fetch newline-delimited JSON from this URL")
     ing.add_argument("--token", help="cloudflare: bearer token for --url")
     ing.add_argument("--authority", help="access-log: Host to attribute (combined logs omit it)")
@@ -100,7 +118,22 @@ def build_parser() -> argparse.ArgumentParser:
     ex = sub.add_parser("export-json", help="dump sightings as explorer/dashboard JSON")
     ex.add_argument("--out", help="write here (default: stdout)")
     ex.set_defaults(func=cmd_export)
+
+    wh = sub.add_parser("serve-webhook", help="run an HTTP endpoint that ingests pushed JSON batches")
+    wh.add_argument("--host", default="127.0.0.1")
+    wh.add_argument("--port", type=int, default=8900)
+    wh.add_argument("--path", default="/ingest", help="POST path (default /ingest)")
+    wh.add_argument("--token", help="require 'Authorization: Bearer <token>'")
+    wh.add_argument("--map", help="field overrides, e.g. ts=time,remote_addr=ip")
+    wh.set_defaults(func=cmd_webhook)
     return p
+
+
+def cmd_webhook(args):
+    _apply_db(args.db)
+    fm = _field_map_from_arg(args.map, FieldMap(source="webhook"))
+    run_webhook(host=args.host, port=args.port, field_map=fm, token=args.token,
+                db_path=args.db, path=args.path)
 
 
 def main(argv=None):
