@@ -7,4 +7,5 @@ __pycache__/
 *.pub.json
 registry/
 *.db
+explorer/harvest.json
 .DS_Store

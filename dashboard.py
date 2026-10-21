@@ -1,8 +1,12 @@
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
 
 import analytics
+from connector.export import export_sightings
+
+EXPLORER_HTML = Path(__file__).resolve().parent / "explorer" / "agent-explorer.html"
 
 HTML_PAGE = """<!doctype html>
 <html lang=\"en\">
@@ -27,7 +31,7 @@ HTML_PAGE = """<!doctype html>
   <body>
     <div class=\"wrap\">
       <h1>OQOS Analytics Dashboard</h1>
-      <p class=\"muted\">Live harvest view for signed and unsigned request activity.</p>
+      <p class=\"muted\">Live harvest view for signed and unsigned request activity. <a href=\"/explorer/\" style=\"color:#38bdf8\">Open agent explorer →</a></p>
       <div class=\"grid\" id=\"stats\"></div>
       <h2>Per-agent summary</h2>
       <div id=\"agent-table\"></div>
@@ -35,6 +39,17 @@ HTML_PAGE = """<!doctype html>
       <div id=\"tag-distribution\"></div>
     </div>
     <script>
+      // Harvested fields (tag, paths, keyid, Signature-Agent) are fully
+      // attacker-controlled -- anyone can send a request with a hostile
+      // `tag` -- so every interpolated value is HTML-escaped before it
+      // reaches innerHTML. Without this a crafted tag like
+      // `<img src=x onerror=...>` is stored XSS against whoever opens
+      // this dashboard. See H3 (injection vector) + XSS finding.
+      function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        }[c]));
+      }
       async function loadSummary() {
         const res = await fetch('/api/summary');
         const data = await res.json();
@@ -54,11 +69,11 @@ HTML_PAGE = """<!doctype html>
 
         const agentRows = data.per_agent_summary.length ? data.per_agent_summary.map(row => `
           <tr>
-            <td><code>${row.keyid.slice(0, 16)}...</code></td>
+            <td><code>${esc(row.keyid.slice(0, 16))}...</code></td>
             <td>${row.n_requests}</td>
             <td>${row.n_verified}</td>
-            <td>${row.tags || '—'}</td>
-            <td>${row.paths_hit || '—'}</td>
+            <td>${esc(row.tags) || '—'}</td>
+            <td>${esc(row.paths_hit) || '—'}</td>
           </tr>
         `).join('') : '<p class=\"muted\">No attributable agents recorded yet.</p>';
         document.getElementById('agent-table').innerHTML = `
@@ -72,7 +87,7 @@ HTML_PAGE = """<!doctype html>
         document.getElementById('tag-distribution').innerHTML = tagEntries.length ? `
           <table>
             <thead><tr><th>Tag</th><th>Count</th></tr></thead>
-            <tbody>${tagEntries.map(([tag, count]) => `<tr><td>${tag}</td><td>${count}</td></tr>`).join('')}</tbody>
+            <tbody>${tagEntries.map(([tag, count]) => `<tr><td>${esc(tag)}</td><td>${count}</td></tr>`).join('')}</tbody>
           </table>
         ` : '<p class=\"muted\">No tags recorded yet.</p>';
       }
@@ -121,6 +136,41 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             payload = json.dumps({"status": "ok"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
+        # The agent explorer, served from explorer/agent-explorer.html. The
+        # page fetches "harvest.json" relative to /explorer/, so redirect the
+        # bare path to the trailing-slash form first.
+        if path == "/explorer":
+            self.send_response(301)
+            self.send_header("Location", "/explorer/")
+            self.end_headers()
+            return
+
+        if path == "/explorer/":
+            try:
+                body = EXPLORER_HTML.read_bytes()
+            except OSError:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"explorer page not found")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # Live data for the explorer: the same export the connector/CLI emit,
+        # straight from the current harvest store (real sightings only).
+        if path == "/explorer/harvest.json":
+            payload = json.dumps(export_sightings()).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))

@@ -21,15 +21,35 @@ from config import AGENT_KEY_PATH
 from keys import keyid_for, b64url, load_private_key
 
 
-def sign_request(private_key, method: str, url: str, signature_agent: str) -> dict:
+DEFAULT_LIFETIME = 60
+
+
+def sign_request(private_key, method: str, url: str, signature_agent: str,
+                 lifetime: int = DEFAULT_LIFETIME, allowed_authorities=None) -> dict:
     """
     Returns the headers to attach to an outgoing request.
     signature_agent: base URL where the verifier can fetch this agent's
     key directory, e.g. "https://your-agent.example"
+
+    lifetime: seconds the signature stays valid. A hard-coded constant
+    (the old fixed 60s) is itself a fingerprint of the signing library;
+    making it tunable lets an operator jitter/normalise it. See H7.
+
+    allowed_authorities: if given, an allow-list of authorities (netlocs)
+    this agent is willing to sign for. An agent that follows redirects
+    or in-content links can be steered to an attacker's domain and will
+    otherwise sign for it automatically, handing over its identity. When
+    set, signing for anything outside the list raises ValueError. See the
+    steering hypothesis.
     """
     authority = urlparse(url).netloc
+    if allowed_authorities is not None and authority not in allowed_authorities:
+        raise ValueError(
+            f"refusing to sign for non-allowlisted authority: {authority!r} "
+            f"(allowed: {sorted(allowed_authorities)})"
+        )
     created = int(time.time())
-    expires = created + 60
+    expires = created + lifetime
     keyid = keyid_for(private_key.public_key())
     nonce = b64url(os.urandom(12))
 
