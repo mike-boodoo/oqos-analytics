@@ -1,8 +1,12 @@
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
 
 import analytics
+from connector.export import export_sightings
+
+EXPLORER_HTML = Path(__file__).resolve().parent / "explorer" / "agent-explorer.html"
 
 HTML_PAGE = """<!doctype html>
 <html lang=\"en\">
@@ -27,7 +31,7 @@ HTML_PAGE = """<!doctype html>
   <body>
     <div class=\"wrap\">
       <h1>OQOS Analytics Dashboard</h1>
-      <p class=\"muted\">Live harvest view for signed and unsigned request activity.</p>
+      <p class=\"muted\">Live harvest view for signed and unsigned request activity. <a href=\"/explorer/\" style=\"color:#38bdf8\">Open agent explorer →</a></p>
       <div class=\"grid\" id=\"stats\"></div>
       <h2>Per-agent summary</h2>
       <div id=\"agent-table\"></div>
@@ -132,6 +136,41 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             payload = json.dumps({"status": "ok"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
+        # The agent explorer, served from explorer/agent-explorer.html. The
+        # page fetches "harvest.json" relative to /explorer/, so redirect the
+        # bare path to the trailing-slash form first.
+        if path == "/explorer":
+            self.send_response(301)
+            self.send_header("Location", "/explorer/")
+            self.end_headers()
+            return
+
+        if path == "/explorer/":
+            try:
+                body = EXPLORER_HTML.read_bytes()
+            except OSError:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"explorer page not found")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # Live data for the explorer: the same export the connector/CLI emit,
+        # straight from the current harvest store (real sightings only).
+        if path == "/explorer/harvest.json":
+            payload = json.dumps(export_sightings()).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))

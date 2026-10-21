@@ -51,6 +51,7 @@
   .theme-btn:hover { color: var(--fg); }
 
   .provenance { font-size: 0.74rem; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--ok); border-radius: 8px; padding: 9px 12px; margin-bottom: 16px; }
+  .provenance.empty-state { border-left-color: var(--warn); }
   .provenance b { color: var(--fg); }
 
   /* signal strip */
@@ -190,30 +191,13 @@
   const uniq = (a) => [...new Set(a)];
   const byId = (id) => document.getElementById(id);
 
-  // ---- REAL harvest data ------------------------------------------------
-  // Every row below is a genuine SQLite `sightings` row produced by running
-  // this repo's own harvester: `python demo.py`. The keyids are real
-  // base64url ed25519 public keys; the signatures were really verified by
-  // verifier.py. Nothing here is fabricated or hand-authored.
-  //
-  // Why it is only this: this environment cannot observe real agents on the
-  // internet, so the only real data obtainable is the harvester's own
-  // output against locally generated agents (alice/bob/carol) all connecting
-  // over loopback. That is also why every source address is 127.0.0.1 and
-  // every authority is localhost:8088 -- it is a single-host demo run, not
-  // wide-area traffic. Panels with nothing to show say so, and why, rather
-  // than being filled with invented rows.
-  const RAW = [
-    {"ts":1792590051.1402094,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":true,"reason":"verified","keyid":"hWJ_pxD_X35pk309_BQreSAjQBPZly0_rR-KxwzAVKQ","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/alice","user_agent":"alice-bot/1.0"},
-    {"ts":1792590051.1464913,"remote_addr":"127.0.0.1","path":"/products","authority":"localhost:8088","verified":true,"reason":"verified","keyid":"hWJ_pxD_X35pk309_BQreSAjQBPZly0_rR-KxwzAVKQ","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/alice","user_agent":"alice-bot/1.0"},
-    {"ts":1792590051.1511645,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":true,"reason":"verified","keyid":"Khl9y9GCWmYqmk88pgg6_N5VP4h_phkPxOgmd7-KKc8","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/bob","user_agent":"bobcrawler/2.1"},
-    {"ts":1792590051.1556053,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":true,"reason":"verified","keyid":"Khl9y9GCWmYqmk88pgg6_N5VP4h_phkPxOgmd7-KKc8","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/bob","user_agent":"bobcrawler/2.1"},
-    {"ts":1792590051.1598823,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":true,"reason":"verified","keyid":"gkb-NU26SElruUAhqE1LxRGSXhNf_B4L3slHziwbqtE","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/carol","user_agent":"carolagent/0.9"},
-    {"ts":1792590051.163694,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":false,"reason":"replay: signature already used","keyid":"gkb-NU26SElruUAhqE1LxRGSXhNf_B4L3slHziwbqtE","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/carol","user_agent":"carolagent/0.9"},
-    {"ts":1792590051.1672022,"remote_addr":"127.0.0.1","path":"/","authority":"localhost:8088","verified":false,"reason":"unsigned","keyid":null,"alg":null,"tag":null,"created":null,"expires":null,"signature_agent":null,"user_agent":"genericcrawler/1.0"},
-    {"ts":1792590051.1709998,"remote_addr":"127.0.0.1","path":"/products","authority":"localhost:8088","verified":false,"reason":"unsigned","keyid":null,"alg":null,"tag":null,"created":null,"expires":null,"signature_agent":null,"user_agent":"genericcrawler/1.0"},
-    {"ts":1792590051.1748018,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":false,"reason":"unsigned","keyid":null,"alg":null,"tag":null,"created":null,"expires":null,"signature_agent":null,"user_agent":"genericcrawler/1.0"}
-  ];
+  // ---- data source ------------------------------------------------------
+  // This explorer shows ONLY real sightings from the harvest store, served
+  // as harvest.json (the connector's export-json output). There is no
+  // embedded sample and no fabricated agent -- if no real agent traffic has
+  // been ingested, the page shows an empty state that says so and how to
+  // populate it, rather than standing in with invented or demo identities.
+  const RAW = [];
   // S and the aggregates are (re)computed by init() once the data is in
   // hand, so the page can be pointed at the connector's export-json output
   // (published beside it as harvest.json) and fall back to the embedded
@@ -282,11 +266,23 @@
   // ---- rendering ----
   function renderProvenance() {
     const live = SOURCE_LABEL.indexOf("harvest.json") !== -1;
-    byId("provenance").innerHTML =
-      `<b>Real data.</b> ${S.length} sightings loaded from the connector's <code>export-json</code> output (<code>${esc(SOURCE_LABEL)}</code>) — the actual contents of the harvest store, with real ed25519 keys and real verified signatures, no placeholder rows. ` +
+    const el = byId("provenance");
+    if (S.length === 0) {
+      el.classList.add("empty-state");
+      el.innerHTML =
+        `<b>No real agents yet.</b> This explorer shows only real sightings from the harvest store, and none have been ingested. ` +
+        `No demo or placeholder agents are shown in their place. ` +
+        `To populate it, point the connector at real logs — ` +
+        `<code>python -m connector ingest --source cloudflare|access-log|generic …</code> — then ` +
+        (live ? `refresh the data source.` : `serve it (e.g. <code>python explorer/build.py --serve</code>) so harvest.json loads.`);
+      return;
+    }
+    el.classList.remove("empty-state");
+    el.innerHTML =
+      `<b>Real data.</b> ${S.length} sightings loaded from the connector's <code>export-json</code> output — the actual contents of the harvest store, with real ed25519 keys and real verified signatures, no placeholder rows. ` +
       (live
-        ? `Re-run <code>python -m connector export-json</code> and republish the file to refresh this view.`
-        : `The exported file wasn't reachable, so this is the embedded fallback snapshot from a <code>python demo.py</code> run.`);
+        ? `Re-run the connector's <code>export-json</code> (or <code>python explorer/build.py</code>) to refresh this view.`
+        : `Source: <code>${esc(SOURCE_LABEL)}</code>.`);
   }
 
   function renderSignals() {
@@ -336,7 +332,7 @@
   function renderList() {
     const rowsEl = byId("rows");
     const titleEl = byId("listTitle");
-    let html = "", emptyMsg = "No matches.";
+    let html = "", emptyMsg = state.q ? "No matches." : "Nothing ingested yet — point the connector at real logs to populate this.";
 
     if (state.tab === "agents") {
       titleEl.textContent = "Attributable agents";
@@ -387,7 +383,7 @@
             <div class="meta">${host(a.operators[0] || "—")} · ${esc(a.rows[0].reason)}</div></div>
           <div class="right"><span class="pill claim">claim</span></div>
         </div>`).join("");
-      emptyMsg = "No identity was presented that failed to verify at least once. The only non-verified rows in this run are unsigned traffic (no keyid at all) and one replay of carol's own signature — and carol is already an attributable agent, so nothing lands here.";
+      if (!state.q) emptyMsg = "No claimed-but-unverified identities. A keyid lands here only if it was presented on a signed request yet never verified (an unregistered key, an expired signature, or a forged keyid); none are present in the current data.";
     }
     rowsEl.innerHTML = html || `<div class="empty">${esc(emptyMsg)}</div>`;
   }
@@ -512,6 +508,6 @@
   fetch("harvest.json", { cache: "no-store" })
     .then((r) => { if (!r.ok) throw new Error("no file"); return r.json(); })
     .then((rows) => init(rows, "harvest.json"))
-    .catch(() => init(RAW, "embedded fallback snapshot"));
+    .catch(() => init(RAW, "no data source"));
 })();
 </script>
