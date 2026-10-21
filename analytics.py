@@ -107,12 +107,25 @@ def total_sightings() -> int:
         return c.execute("SELECT COUNT(*) FROM sightings").fetchone()[0]
 
 
+# A keyid is only an *attributable* agent once it has at least one
+# verified sighting. A keyid that has only ever appeared on unverified
+# requests is a *claim* (an unregistered/forged/expired presentation),
+# not an agent -- attributing activity to it would let anyone frame any
+# agent by signing (or merely asserting) its public keyid. See H1/H3.
+_ATTRIBUTABLE = (
+    "keyid IS NOT NULL AND keyid IN "
+    "(SELECT keyid FROM sightings WHERE verified = 1 AND keyid IS NOT NULL)"
+)
+
+
 def unique_agents() -> int:
-    """Distinct attributable agents seen (non-null keyid only —
-    unsigned traffic can't be individuated, only counted in aggregate)."""
+    """Distinct *attributable* agents: a keyid that verified at least
+    once. Unsigned traffic (null keyid) and keyids that never verified
+    are excluded -- they can't be individuated or safely attributed."""
     with _conn() as c:
         return c.execute(
-            "SELECT COUNT(DISTINCT keyid) FROM sightings WHERE keyid IS NOT NULL"
+            "SELECT COUNT(DISTINCT keyid) FROM sightings WHERE verified = 1 "
+            "AND keyid IS NOT NULL"
         ).fetchone()[0]
 
 
@@ -136,7 +149,7 @@ def per_agent_summary() -> list[dict]:
                       GROUP_CONCAT(DISTINCT signature_agent) as signature_agents,
                       GROUP_CONCAT(DISTINCT path) as paths_hit
                FROM sightings
-               WHERE keyid IS NOT NULL
+               WHERE """ + _ATTRIBUTABLE + """
                GROUP BY keyid
                ORDER BY n_requests DESC"""
         ).fetchall()
@@ -155,9 +168,16 @@ def tag_distribution() -> dict:
 
 
 def verification_rate() -> float:
+    """Fraction of genuine authentication *attempts* that verified.
+
+    Housekeeping requests that carry no signature but are logged as
+    verified (directory fetches) are excluded from both numerator and
+    denominator -- otherwise anyone can inflate the headline number with
+    unauthenticated GETs of the public key directory. See H9."""
     with _conn() as c:
         total, verified = c.execute(
-            "SELECT COUNT(*), SUM(verified) FROM sightings"
+            "SELECT COUNT(*), SUM(verified) FROM sightings "
+            "WHERE reason != 'directory fetch'"
         ).fetchone()
     return (verified or 0) / total if total else 0.0
 
@@ -181,8 +201,71 @@ def distinct_keyids_per_remote_addr() -> dict:
         rows = c.execute(
             """SELECT remote_addr, COUNT(DISTINCT keyid) as n_keyids
                FROM sightings
-               WHERE keyid IS NOT NULL
+               WHERE verified = 1 AND keyid IS NOT NULL
                GROUP BY remote_addr
+               ORDER BY n_keyids DESC"""
+        ).fetchall()
+    return dict(rows)
+
+
+def claimed_unverified_identities() -> dict:
+    """
+    keyids that have been *claimed* on signed requests but have NEVER
+    verified -- unregistered agents, expired signatures, or an attacker
+    asserting a victim's (public) keyid. This is the honest record of
+    what was presented, kept separate from attributed agents so that
+    'who did X' can never be spoofed by anyone who knows a public keyid.
+    See H1 (recorded before trust) and H3 (framing). {keyid: count}.
+    """
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT keyid, COUNT(*) as n
+               FROM sightings
+               WHERE keyid IS NOT NULL
+                 AND keyid NOT IN (
+                     SELECT keyid FROM sightings
+                     WHERE verified = 1 AND keyid IS NOT NULL)
+               GROUP BY keyid
+               ORDER BY n DESC"""
+        ).fetchall()
+    return dict(rows)
+
+
+def authorities_per_keyid() -> dict:
+    """
+    How many distinct authorities (sites) each attributable agent has
+    signed for. The same keyid is reused across every site under Web Bot
+    Auth, so a value > 1 is direct evidence that this agent is trivially
+    linkable across those sites by anyone comparing logs. See H2.
+    {keyid: n_distinct_authorities}.
+    """
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT keyid, COUNT(DISTINCT authority) as n_authorities
+               FROM sightings
+               WHERE verified = 1 AND keyid IS NOT NULL
+               GROUP BY keyid
+               ORDER BY n_authorities DESC"""
+        ).fetchall()
+    return dict(rows)
+
+
+def distinct_keyids_per_signature_agent() -> dict:
+    """
+    How many distinct attributable keyids are presented under each
+    Signature-Agent (operator) origin. A single operator fielding many
+    keys -- each on its own key and even its own IP -- looks like a
+    healthy spread to distinct_keyids_per_remote_addr(), but collapses
+    to one actor here. This is the operator-fleet view the IP-based
+    Sybil check misses. See H8. {signature_agent: n_keyids}.
+    """
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT signature_agent, COUNT(DISTINCT keyid) as n_keyids
+               FROM sightings
+               WHERE verified = 1 AND keyid IS NOT NULL
+                 AND signature_agent IS NOT NULL
+               GROUP BY signature_agent
                ORDER BY n_keyids DESC"""
         ).fetchall()
     return dict(rows)

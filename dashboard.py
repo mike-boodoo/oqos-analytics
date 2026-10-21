@@ -35,6 +35,17 @@ HTML_PAGE = """<!doctype html>
       <div id=\"tag-distribution\"></div>
     </div>
     <script>
+      // Harvested fields (tag, paths, keyid, Signature-Agent) are fully
+      // attacker-controlled -- anyone can send a request with a hostile
+      // `tag` -- so every interpolated value is HTML-escaped before it
+      // reaches innerHTML. Without this a crafted tag like
+      // `<img src=x onerror=...>` is stored XSS against whoever opens
+      // this dashboard. See H3 (injection vector) + XSS finding.
+      function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        }[c]));
+      }
       async function loadSummary() {
         const res = await fetch('/api/summary');
         const data = await res.json();
@@ -54,11 +65,11 @@ HTML_PAGE = """<!doctype html>
 
         const agentRows = data.per_agent_summary.length ? data.per_agent_summary.map(row => `
           <tr>
-            <td><code>${row.keyid.slice(0, 16)}...</code></td>
+            <td><code>${esc(row.keyid.slice(0, 16))}...</code></td>
             <td>${row.n_requests}</td>
             <td>${row.n_verified}</td>
-            <td>${row.tags || '—'}</td>
-            <td>${row.paths_hit || '—'}</td>
+            <td>${esc(row.tags) || '—'}</td>
+            <td>${esc(row.paths_hit) || '—'}</td>
           </tr>
         `).join('') : '<p class=\"muted\">No attributable agents recorded yet.</p>';
         document.getElementById('agent-table').innerHTML = `
@@ -72,7 +83,7 @@ HTML_PAGE = """<!doctype html>
         document.getElementById('tag-distribution').innerHTML = tagEntries.length ? `
           <table>
             <thead><tr><th>Tag</th><th>Count</th></tr></thead>
-            <tbody>${tagEntries.map(([tag, count]) => `<tr><td>${tag}</td><td>${count}</td></tr>`).join('')}</tbody>
+            <tbody>${tagEntries.map(([tag, count]) => `<tr><td>${esc(tag)}</td><td>${count}</td></tr>`).join('')}</tbody>
           </table>
         ` : '<p class=\"muted\">No tags recorded yet.</p>';
       }

@@ -33,13 +33,40 @@ cd /workspaces/oqos-analytics
 python -m pytest -q
 ```
 
-The repo currently includes 10 passing tests covering protocol correctness and the analytics/statistical claims.
+The repo currently includes 21 passing tests covering protocol correctness, the analytics/statistical claims, and a set of exposure hypotheses with their hardening fixes.
 
 - **`tests/testprotocol.py`** — signing/verification correctness: valid signatures pass, unsigned/unknown-key/expired/tampered all fail, replay attempts are rejected, and same-second legitimate signings are not mistaken for replay.
 - **`tests/test_harverster_analytics.py`** — aggregate queries such as `unique_agents()`, `verification_rate()`, `per_agent_summary()`, `tag_distribution()`, and `replay_attempts()` match known ground truth.
 - **`tests/test_confidence_curve.py`** — statistical backtest showing the standard error narrows with $\sqrt{N}$ as expected.
 - **`tests/test_sybil_bias.py`** — reproduces Sybil inflation and self-selection bias scenarios in a controlled way.
 - **`tests/test_repo_config.py`** — ensures the repo is portable and not tied to `/home/claude` paths.
+- **`tests/test_exposure_hypotheses.py`** — one test per exposure hypothesis surfaced by treating this as a Web Bot Auth harvester (see below). Each asserts the hardened behaviour, so it would fail against the pre-hardening code.
+
+## Exposure hypotheses and the hardening
+
+Analysing the repo as a harvester surfaced a set of hypotheses about how
+RFC 9421 / Web Bot Auth exposes agents, and where this demo's verifier
+was weaker than the protocol requires. `tests/test_exposure_hypotheses.py`
+turns each into a concrete test; the fixes live across `config.py`,
+`analytics.py`, `verifier.py`, `signer.py`, and `dashboard.py`.
+
+| Hypothesis | Problem | Fix |
+|---|---|---|
+| **H1** record-before-trust | A claimed `keyid` was logged *and attributed* before any verification. | Attribution now requires ≥1 verified sighting; unverified claims go to `analytics.claimed_unverified_identities()`. |
+| **H2** cross-site linkability | The same key is reused across every site; nothing surfaced it. | `analytics.authorities_per_keyid()` flags a key seen on >1 authority. |
+| **H3** framing | Anyone could forge a victim's public `keyid` on a (rejected) request and pollute its history. | Rejected rows are no longer attributed; they stay visible only as unattributed claims. |
+| **H4** log evasion | Malformed signature headers crashed `verify_request` before the request was logged. | Parsing fails soft (never raises); every outcome is loggable. |
+| **H5** unbounded lifetime | A decades-long or future-dated signature verified. | `verifier` enforces `MAX_SIGNATURE_LIFETIME` and rejects future `created` (`config.py`). |
+| **H6** cross-site replay | The verifier trusted the client-supplied `Host` as its authority. | `resolve_authority()` pins `EXPECTED_AUTHORITY`; the server pins its own host:port. |
+| **H7** fingerprinting | A hard-coded 60s lifetime fingerprints the signer. | `sign_request(lifetime=...)` makes it tunable/jitterable. |
+| **H8** operator clustering | A one-operator fleet across many keys/IPs looked like a healthy spread. | `analytics.distinct_keyids_per_signature_agent()` collapses it to one actor. |
+| **H9** rate inflation | Unauthenticated directory fetches counted as verified. | `verification_rate()` excludes directory housekeeping. |
+| **Steering** | An agent re-signs for whatever URL it is lured to via redirect/link. | `sign_request(allowed_authorities=...)` refuses off-list authorities. |
+| **XSS** | The dashboard injected harvested `tag`/`paths` via `innerHTML` unescaped. | `dashboard.py` HTML-escapes every interpolated field. |
+
+These are properties of this demo verifier and of the protocol profile,
+not of RFC 9421 itself; H1/H2/H7/H8 are inherent to a stable, shared,
+public key identity and are *surfaced* here rather than eliminated.
 
 ## Files
 

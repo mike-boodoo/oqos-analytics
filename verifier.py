@@ -17,7 +17,12 @@ from urllib.parse import urlparse
 
 from cryptography.exceptions import InvalidSignature
 
-from config import AGENT_KEY_PATH
+from config import (
+    AGENT_KEY_PATH,
+    MAX_SIGNATURE_LIFETIME,
+    CLOCK_SKEW,
+    EXPECTED_AUTHORITY,
+)
 from keys import b64url_decode, load_private_key
 from directory import build_directory_body, sign_directory, DIRECTORY_PATH
 from registry import load_registry
@@ -44,30 +49,83 @@ def refresh_known_keys():
     KNOWN_KEYS = load_registry()
 
 
-def _parse_sig_input(sig_input: str) -> dict:
-    _, params = sig_input.split("=", 1)
-    parts = params.split(";")
-    fields = {"covered": parts[0]}
-    for p in parts[1:]:
-        k, v = p.split("=", 1)
-        fields[k] = v.strip('"')
-    return fields
+def resolve_authority(headers: dict) -> str:
+    """
+    The authority this verifier checks signatures against. If a
+    deployment pins EXPECTED_AUTHORITY, use it; otherwise fall back to
+    the client-supplied Host header (legacy demo behaviour). Trusting
+    Host lets a signature captured by site A be replayed to site B with
+    a spoofed Host, so a real deployment should always pin it. See H6.
+    """
+    return EXPECTED_AUTHORITY or headers.get("Host", "")
 
 
-def verify_request(headers: dict, authority: str, now: int) -> tuple:
-    """Returns (verified: bool, reason: str, sig_fields: dict)."""
+def _parse_sig_input(sig_input: str):
+    """Parse a Signature-Input value. Returns a dict, or None if the
+    header is malformed -- callers must fail closed rather than crash,
+    so that a hostile client can't dodge logging with a broken header
+    (the real server records every parsed outcome). See H4."""
+    try:
+        _, params = sig_input.split("=", 1)
+        parts = params.split(";")
+        fields = {"covered": parts[0]}
+        for p in parts[1:]:
+            k, v = p.split("=", 1)
+            fields[k] = v.strip('"')
+        return fields
+    except (ValueError, AttributeError):
+        return None
+
+
+def _extract_sig(signature: str):
+    """Pull the base64url body out of a `sig1=:<b64>:` Signature header.
+    Returns None on a malformed header instead of raising. See H4."""
+    try:
+        parts = signature.split(":")
+        if len(parts) < 2 or not parts[1]:
+            return None
+        return parts[1]
+    except AttributeError:
+        return None
+
+
+def verify_request(headers: dict, authority: str, now: int,
+                   max_lifetime: int = None, clock_skew: int = None) -> tuple:
+    """Returns (verified: bool, reason: str, sig_fields: dict).
+
+    Fails soft on every malformed input (never raises), so the caller
+    always has an outcome to log. Enforces a lifetime policy and rejects
+    future-dated signatures, not just already-expired ones."""
+    max_lifetime = MAX_SIGNATURE_LIFETIME if max_lifetime is None else max_lifetime
+    clock_skew = CLOCK_SKEW if clock_skew is None else clock_skew
+
     sig_input = headers.get("Signature-Input")
     signature = headers.get("Signature")
     if not sig_input or not signature:
         return False, "unsigned", {}
 
     fields = _parse_sig_input(sig_input)
+    if fields is None:
+        return False, "malformed Signature-Input", {}
+
     keyid = fields.get("keyid")
-    created = int(fields.get("created", 0))
-    expires = int(fields.get("expires", 0))
+    try:
+        created = int(fields["created"])
+        expires = int(fields["expires"])
+    except (KeyError, ValueError, TypeError):
+        return False, "malformed signature timestamps", fields
 
-    sig_b64 = signature.split(":")[1]
+    sig_b64 = _extract_sig(signature)
+    if sig_b64 is None:
+        return False, "malformed Signature header", fields
 
+    # Lifetime policy -- enforced BEFORE the crypto check so an
+    # attacker-chosen, decades-long or future-dated window is rejected
+    # even when the signature itself is cryptographically valid. See H5.
+    if created > now + clock_skew:
+        return False, "signature not yet valid", fields
+    if expires - created > max_lifetime:
+        return False, "signature lifetime exceeds policy", fields
     if now > expires:
         return False, "signature expired", fields
     # Replay key is the actual signature value. Because @authority-only
@@ -80,7 +138,10 @@ def verify_request(headers: dict, authority: str, now: int) -> tuple:
     if keyid not in KNOWN_KEYS:
         return False, "unknown keyid (not in registry)", fields
 
-    sig_bytes = b64url_decode(sig_b64)
+    try:
+        sig_bytes = b64url_decode(sig_b64)
+    except Exception:
+        return False, "malformed signature encoding", fields
 
     signature_base = (
         f'"@authority": {authority}\n'
@@ -103,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         headers = dict(self.headers)
-        authority = headers.get("Host", "")
+        authority = resolve_authority(headers)
         now = int(time.time())
 
         if path == DIRECTORY_PATH:
@@ -153,9 +214,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def run(port=8088):
+    global EXPECTED_AUTHORITY
     analytics.init_db()
     refresh_known_keys()
+    # Pin the authority to this server's own host:port unless the
+    # deployment already configured one, so signatures are checked
+    # against where the request actually landed rather than a
+    # client-controlled Host header. See H6.
+    if EXPECTED_AUTHORITY is None:
+        EXPECTED_AUTHORITY = f"localhost:{port}"
     print(f"verifier+harvester listening on http://localhost:{port}")
+    print(f"  pinned authority: {EXPECTED_AUTHORITY}")
     print(f"  directory:   http://localhost:{port}{DIRECTORY_PATH}")
     print(f"  gated route: http://localhost:{port}/whoami")
     print(f"  known agents in registry: {len(KNOWN_KEYS)}")
