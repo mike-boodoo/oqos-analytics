@@ -81,7 +81,8 @@ public key identity and are *surfaced* here rather than eliminated.
 - `dashboard.py` — lightweight web UI and JSON summary API for the harvested analytics.
 - `app.py` — application entry point for the dashboard.
 - `demo.py` — generates a small population of agents (alice/bob/carol), sends mixed signed/unsigned/replayed traffic, and prints the harvest report.
-- `tests/` — pytest suite covering protocol correctness, analytics arithmetic, the statistical confidence-curve claim, Sybil inflation, and portability.
+- `connector/` — ingest connector: pulls real request logs (Cloudflare, raw access logs, or any JSON feed) into the `sightings` store. CLI (`python -m connector`) and a stdlib MCP server (`connector/mcp_server.py`).
+- `tests/` — pytest suite covering protocol correctness, analytics arithmetic, the statistical confidence-curve claim, Sybil inflation, portability, the exposure hypotheses, and the ingest connector.
 
 ## What gets harvested, and from whom
 
@@ -111,6 +112,42 @@ call were cryptographically indistinguishable. `signer.py` adds an
 explicit nonce inside the signed parameters purely so *this demo* can
 tell the two apart; real Web Bot Auth accepts that ambiguity and relies
 on a short expiry window instead of per-request uniqueness.
+
+## Ingesting real traffic (the connector)
+
+`demo.py` only produces local, loopback traffic. To run the same
+analytics over **real** agent sightings, the `connector/` package ingests
+request logs from an external source into the same `sightings` store, so
+`analytics.py`, `dashboard.py`, and the agent explorer all work unchanged.
+
+Three sources, one normalizer, idempotent writes:
+
+```bash
+# a CDN's logs (Cloudflare Logpush/Logs: file, URL, or in-memory)
+python -m connector ingest --source cloudflare --path cf-logpush.jsonl
+python -m connector ingest --source cloudflare --url https://… --token "$CF_TOKEN"
+
+# raw web-server access logs (JSON logging, or classic combined text)
+python -m connector ingest --source access-log --path access.log --authority shop.example
+
+# any JSON feed, with a field map
+python -m connector ingest --source generic --path feed.jsonl \
+  --map ts=time,remote_addr=ip,host=authority,signature_input=sig_input
+
+python -m connector status                     # rows ingested, per-source cursors
+python -m connector export-json --out snap.json  # sightings as explorer/dashboard JSON
+```
+
+The same core is exposed as a dependency-light MCP server
+(`python -m connector.mcp_server`) with tools `ingest_logs`,
+`connector_status`, `preview_normalize`, and `export_snapshot`.
+
+Signature parameters are parsed with the verifier's own parser, and the
+log's real timestamp is preserved (not the ingest time). One honest
+caveat: ingesting a CDN's logs records the **upstream's** verification
+verdict (logs rarely carry enough to re-run ed25519), so those rows read
+`verified (cloudflare)` — the trust shift to an intermediary is exactly
+hypotheses H1/H6.
 
 ## Extending this toward the full design
 

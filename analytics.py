@@ -67,12 +67,18 @@ def record_sighting(
     sig_fields: dict | None = None,
     signature_agent: str | None = None,
     user_agent: str | None = None,
+    ts: float | None = None,
 ):
     """
     sig_fields: the parsed Signature-Input fields (keyid, alg, tag,
     created, expires) when present — this is the "metadata that could
     be harvested from any agent it sees," on top of raw HTTP metadata
     (remote_addr, user_agent) that's present regardless of signing.
+
+    ts: the event time to store. Defaults to now, which is right for a
+    live request hitting the verifier. When replaying historical logs
+    (see connector/), pass the log's own timestamp so the recorded time
+    is when the agent was actually seen, not when it was ingested.
     """
     sig_fields = sig_fields or {}
     with _conn() as c:
@@ -82,7 +88,7 @@ def record_sighting(
                 keyid, alg, tag, created, expires, signature_agent, user_agent)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                time.time(),
+                time.time() if ts is None else ts,
                 remote_addr,
                 method,
                 path,
