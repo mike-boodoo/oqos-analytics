@@ -19,6 +19,7 @@ import json
 import sys
 
 import analytics
+from .export import export_sightings
 from .normalize import normalize, RawRecord
 from .sources import FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource
 from .writer import IngestWriter
@@ -116,19 +117,7 @@ def _tool_preview(args):
 
 def _tool_export(args):
     _apply_db(args)
-    import sqlite3
-    analytics.init_db()
-    c = sqlite3.connect(str(analytics.DB_PATH)); c.row_factory = sqlite3.Row
-    cols = ("ts", "remote_addr", "path", "authority", "verified", "reason",
-            "keyid", "alg", "tag", "created", "expires", "signature_agent", "user_agent")
-    q = f"SELECT {','.join(cols)} FROM sightings ORDER BY ts"
-    if args.get("limit"):
-        q += f" LIMIT {int(args['limit'])}"
-    rows = []
-    for r in c.execute(q):
-        d = dict(r); d["verified"] = bool(d["verified"]); rows.append(d)
-    c.close()
-    return {"sightings": rows}
+    return {"sightings": export_sightings(db_path=args.get("db"), limit=args.get("limit"))}
 
 
 HANDLERS = {

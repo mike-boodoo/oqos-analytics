@@ -17,6 +17,7 @@ from connector.sources import (
     FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource, to_epoch,
 )
 from connector.writer import IngestWriter
+from connector.export import export_sightings
 from connector import mcp_server
 
 
@@ -123,6 +124,22 @@ def test_ingest_preserves_log_timestamp_not_ingest_time(isolated_store):
     stored = c.execute("SELECT ts FROM sightings").fetchone()[0]
     c.close()
     assert abs(stored - old_ts) < 1  # the event's own time, not time.time()
+
+
+def test_export_sightings_shape_matches_explorer(isolated_store):
+    records = [{"EdgeStartTimestamp": 1792590051, "ClientIP": "1.1.1.1",
+                "ClientRequestMethod": "GET", "ClientRequestPath": "/whoami",
+                "ClientRequestHost": "shop.example", "VerifiedBot": True,
+                "RequestHeaders": {"signature-input": SIG_INPUT, "signature": SIG}}]
+    IngestWriter().ingest(CloudflareSource(data=records), source_name="cloudflare")
+    rows = export_sightings()
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["verified"] is True and isinstance(r["verified"], bool)
+    assert r["keyid"] == "REALKEYID_abc123" and r["authority"] == "shop.example"
+    # exactly the columns the explorer / dashboard read
+    assert set(r) == {"ts", "remote_addr", "path", "authority", "verified", "reason",
+                      "keyid", "alg", "tag", "created", "expires", "signature_agent", "user_agent"}
 
 
 # ---- MCP server surface --------------------------------------------------

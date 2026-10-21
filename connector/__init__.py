@@ -31,9 +31,11 @@ from .sources import (
     CloudflareSource,
 )
 from .writer import IngestWriter
+from .export import export_sightings, write_export
 
 __all__ = [
     "normalize", "RawRecord", "CANON_COLUMNS",
     "Source", "FieldMap", "JsonRecordSource", "CombinedLogSource",
     "CloudflareSource", "IngestWriter",
+    "export_sightings", "write_export",
 ]

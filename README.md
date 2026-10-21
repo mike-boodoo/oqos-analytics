@@ -81,7 +81,8 @@ public key identity and are *surfaced* here rather than eliminated.
 - `dashboard.py` — lightweight web UI and JSON summary API for the harvested analytics.
 - `app.py` — application entry point for the dashboard.
 - `demo.py` — generates a small population of agents (alice/bob/carol), sends mixed signed/unsigned/replayed traffic, and prints the harvest report.
-- `connector/` — ingest connector: pulls real request logs (Cloudflare, raw access logs, or any JSON feed) into the `sightings` store. CLI (`python -m connector`) and a stdlib MCP server (`connector/mcp_server.py`).
+- `connector/` — ingest connector: pulls real request logs (Cloudflare, raw access logs, or any JSON feed) into the `sightings` store. CLI (`python -m connector`), a stdlib MCP server (`connector/mcp_server.py`), and a shared `export.py` for the explorer/dashboard JSON shape.
+- `explorer/` — `agent-explorer.html`, a standalone UI fed by the connector's `export-json` output, plus `build.py` to regenerate `harvest.json` and serve the page.
 - `tests/` — pytest suite covering protocol correctness, analytics arithmetic, the statistical confidence-curve claim, Sybil inflation, portability, the exposure hypotheses, and the ingest connector.
 
 ## What gets harvested, and from whom
@@ -141,6 +142,23 @@ python -m connector export-json --out snap.json  # sightings as explorer/dashboa
 The same core is exposed as a dependency-light MCP server
 (`python -m connector.mcp_server`) with tools `ingest_logs`,
 `connector_status`, `preview_normalize`, and `export_snapshot`.
+
+### The agent explorer
+
+`explorer/agent-explorer.html` is a standalone, single-file UI for
+browsing what was harvested: per-agent drill-down, a random-agent pick,
+and pivots across operators, source addresses, sites, cross-site key
+reuse, operator clusters, and unverified "claims". It reads
+`explorer/harvest.json` — the connector's `export-json` output — and
+falls back to an embedded snapshot if that file isn't present.
+
+```bash
+# regenerate explorer/harvest.json from the store, then serve the page
+python explorer/build.py --serve          # http://127.0.0.1:8080/agent-explorer.html
+```
+
+Refresh loop: ingest real logs with the connector, re-run
+`python explorer/build.py`, reload the page.
 
 Signature parameters are parsed with the verifier's own parser, and the
 log's real timestamp is preserved (not the ingest time). One honest

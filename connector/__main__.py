@@ -20,6 +20,7 @@ import sys
 from dataclasses import fields as _dc_fields
 
 import analytics
+from .export import export_sightings, write_export
 from .sources import FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource
 from .writer import IngestWriter
 
@@ -72,23 +73,11 @@ def cmd_status(args):
 def cmd_export(args):
     """Dump sightings as the JSON the agent explorer / dashboard consume."""
     _apply_db(args.db)
-    import sqlite3
-    analytics.init_db()
-    c = sqlite3.connect(str(analytics.DB_PATH))
-    c.row_factory = sqlite3.Row
-    cols = ("ts", "remote_addr", "path", "authority", "verified", "reason",
-            "keyid", "alg", "tag", "created", "expires", "signature_agent", "user_agent")
-    rows = []
-    for r in c.execute(f"SELECT {','.join(cols)} FROM sightings ORDER BY ts"):
-        d = dict(r); d["verified"] = bool(d["verified"]); rows.append(d)
-    c.close()
-    out = json.dumps(rows, indent=2)
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as f:
-            f.write(out)
-        print(f"wrote {len(rows)} sightings -> {args.out}")
+        n = write_export(args.out, db_path=args.db)
+        print(f"wrote {n} sightings -> {args.out}")
     else:
-        print(out)
+        print(json.dumps(export_sightings(db_path=args.db), indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:

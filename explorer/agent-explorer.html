@@ -1,0 +1,517 @@
+<title>Agent Explorer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* Layout: top signal strip, a toolbar, then a list/detail split that
+     stacks on phones. Forensic console feel: ink neutrals with a slight
+     blue bias, one teal accent, separate semantic good/warn/bad. */
+  :root {
+    --bg: #f5f7f9; --surface: #ffffff; --surface-2: #eef1f4; --surface-3: #e5e9ee;
+    --border: #d6dce3; --fg: #19202a; --muted: #5a6573; --faint: #889;
+    --accent: #0d7d8c; --accent-fg: #ffffff;
+    --ok: #157f49; --ok-bg: #e3f3ea; --warn: #9c5c00; --warn-bg: #f6ecd8;
+    --bad: #bf3528; --bad-bg: #f7e3e0; --claim: #6a4bb0; --claim-bg: #ece6f7;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117; --surface: #151c26; --surface-2: #1b222d; --surface-3: #222b38;
+      --border: #2a3542; --fg: #e4eaf1; --muted: #93a0af; --faint: #6b7988;
+      --accent: #38b9c9; --accent-fg: #06181b;
+      --ok: #41cf8d; --ok-bg: #11291f; --warn: #e3a948; --warn-bg: #2c2412;
+      --bad: #e86a5c; --bad-bg: #2d1815; --claim: #b39af0; --claim-bg: #201a33;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --surface: #151c26; --surface-2: #1b222d; --surface-3: #222b38;
+    --border: #2a3542; --fg: #e4eaf1; --muted: #93a0af; --faint: #6b7988;
+    --accent: #38b9c9; --accent-fg: #06181b;
+    --ok: #41cf8d; --ok-bg: #11291f; --warn: #e3a948; --warn-bg: #2c2412;
+    --bad: #e86a5c; --bad-bg: #2d1815; --claim: #b39af0; --claim-bg: #201a33;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.45; }
+  .wrap { max-width: 1180px; margin: 0 auto;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 20px 48px; }
+  h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+  .sub { color: var(--muted); font-size: 0.86rem; margin: 2px 0 0; max-width: 66ch; }
+  a { color: var(--accent); }
+  button { font-family: inherit; }
+  .mono { font-family: var(--mono); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  header.top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .theme-btn { background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 0.78rem; cursor: pointer; }
+  .theme-btn:hover { color: var(--fg); }
+
+  .provenance { font-size: 0.74rem; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--ok); border-radius: 8px; padding: 9px 12px; margin-bottom: 16px; }
+  .provenance b { color: var(--fg); }
+
+  /* signal strip */
+  .signals { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; }
+  .stat .k { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .stat .v { font-size: 1.5rem; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .stat .v.good { color: var(--ok); } .stat .v.bad { color: var(--bad); }
+
+  .cluster-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; margin-bottom: 20px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 13px; }
+  .panel h3 { margin: 0 0 8px; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .panel .hint { color: var(--faint); font-size: 0.72rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .sig-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; border-top: 1px solid var(--border); cursor: pointer; }
+  .sig-item:first-of-type { border-top: 0; }
+  .sig-item:hover .lbl { color: var(--accent); }
+  .sig-item .lbl { font-family: var(--mono); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty-reason { font-size: 0.74rem; color: var(--faint); padding: 4px 0 2px; line-height: 1.4; }
+  .count-badge { font-variant-numeric: tabular-nums; font-size: 0.74rem; font-weight: 600; padding: 1px 8px; border-radius: 20px; background: var(--surface-3); color: var(--fg); flex: none; }
+  .count-badge.flag { background: var(--warn-bg); color: var(--warn); }
+
+  /* toolbar */
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .tabs { display: flex; gap: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 3px; flex-wrap: wrap; }
+  .tab { border: 0; background: transparent; color: var(--muted); padding: 6px 11px; border-radius: 6px; font-size: 0.82rem; cursor: pointer; font-weight: 500; }
+  .tab[aria-selected="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,0.12); }
+  .search { flex: 1 1 180px; min-width: 0; }
+  .search input { width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--fg); border-radius: 8px; padding: 8px 11px; font-family: var(--mono); font-size: 0.82rem; }
+  .search input::placeholder { color: var(--faint); }
+  .rand { background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 8px; padding: 8px 13px; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+  .rand:hover { filter: brightness(1.06); }
+
+  /* split */
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 14px; align-items: start; }
+  @media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
+
+  .list-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .list-head { display: flex; align-items: center; justify-content: space-between; padding: 9px 13px; border-bottom: 1px solid var(--border); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .list-head .sorts { display: flex; gap: 3px; }
+  .sort-btn { border: 0; background: transparent; color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; cursor: pointer; padding: 2px 6px; border-radius: 5px; font-weight: 600; }
+  .sort-btn[aria-pressed="true"] { background: var(--surface-3); color: var(--fg); }
+  .rows { max-height: 560px; overflow-y: auto; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 10px 13px; border-top: 1px solid var(--border); cursor: pointer; }
+  .row:first-child { border-top: 0; }
+  .row:hover { background: var(--surface-2); }
+  .row[aria-current="true"] { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+  .row .id { font-family: var(--mono); font-size: 0.82rem; font-weight: 600; }
+  .row .meta { color: var(--muted); font-size: 0.73rem; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .grow { flex: 1; min-width: 0; }
+  .row .right { flex: none; text-align: right; }
+  .empty { padding: 26px 14px; text-align: center; color: var(--muted); font-size: 0.82rem; line-height: 1.5; }
+
+  /* pills */
+  .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 0.68rem; font-weight: 600; padding: 2px 7px; border-radius: 20px; white-space: nowrap; }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.claim { background: var(--claim-bg); color: var(--claim); }
+  .pill.neutral { background: var(--surface-3); color: var(--muted); }
+
+  /* detail */
+  .detail { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; min-height: 200px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 8px); }
+  @media (max-width: 760px) { .detail { position: static; } }
+  .detail-empty { padding: 40px 20px; text-align: center; color: var(--faint); }
+  .detail-empty .big { font-size: 2rem; margin-bottom: 6px; opacity: 0.5; }
+  .dhead { padding: 14px 15px; border-bottom: 1px solid var(--border); }
+  .dkicker { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); display: flex; align-items: center; gap: 7px; }
+  .did { font-family: var(--mono); font-size: 0.92rem; font-weight: 600; margin-top: 5px; word-break: break-all; }
+  .dbody { padding: 14px 15px; display: flex; flex-direction: column; gap: 15px; }
+  .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 9px; }
+  .kv .cell .k { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .kv .cell .val { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .section-lbl { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 7px; display: flex; align-items: center; gap: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-family: var(--mono); font-size: 0.76rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 4px 9px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip.link:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.static { cursor: default; }
+  .chip.static:hover { border-color: var(--border); color: inherit; }
+
+  .timeline { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .tl-row { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-top: 1px solid var(--border); font-size: 0.76rem; }
+  .tl-row:first-child { border-top: 0; }
+  .tl-row .t { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+  .tl-row .p { font-family: var(--mono); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tl-row .reason { color: var(--muted); font-size: 0.7rem; }
+
+  .note { font-size: 0.74rem; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 7px; padding: 9px 11px; }
+  .note.warn { border-left-color: var(--warn); }
+  .note.claim { border-left-color: var(--claim); }
+  .footer { margin-top: 22px; color: var(--faint); font-size: 0.73rem; border-top: 1px solid var(--border); padding-top: 12px; line-height: 1.55; }
+  .footer code { font-family: var(--mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Agent Explorer</h1>
+      <p class="sub">Browse the agents this repo's harvester actually recorded. Click any identifier — keyid, operator, address, site — to pivot through what the signed headers expose.</p>
+    </div>
+    <button class="theme-btn" id="themeBtn" type="button">◑ theme</button>
+  </header>
+
+  <div class="provenance" id="provenance"></div>
+  <div class="signals" id="signals"></div>
+  <div class="cluster-row" id="clusters"></div>
+
+  <div class="toolbar">
+    <div class="tabs" id="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="agents" aria-selected="true">Agents</button>
+      <button class="tab" role="tab" data-tab="operators" aria-selected="false">Operators</button>
+      <button class="tab" role="tab" data-tab="addresses" aria-selected="false">Addresses</button>
+      <button class="tab" role="tab" data-tab="sites" aria-selected="false">Sites</button>
+      <button class="tab" role="tab" data-tab="claims" aria-selected="false">Claims</button>
+    </div>
+    <div class="search"><input id="search" type="search" placeholder="filter…" autocomplete="off" spellcheck="false"></div>
+    <button class="rand" id="randBtn" type="button">🎲 Random agent</button>
+  </div>
+
+  <div class="split">
+    <div class="list-wrap">
+      <div class="list-head">
+        <span id="listTitle">Attributable agents</span>
+        <div class="sorts" id="sorts"></div>
+      </div>
+      <div class="rows" id="rows"></div>
+    </div>
+    <div class="detail" id="detail"></div>
+  </div>
+
+  <div class="footer" id="footer"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  const uniq = (a) => [...new Set(a)];
+  const byId = (id) => document.getElementById(id);
+
+  // ---- REAL harvest data ------------------------------------------------
+  // Every row below is a genuine SQLite `sightings` row produced by running
+  // this repo's own harvester: `python demo.py`. The keyids are real
+  // base64url ed25519 public keys; the signatures were really verified by
+  // verifier.py. Nothing here is fabricated or hand-authored.
+  //
+  // Why it is only this: this environment cannot observe real agents on the
+  // internet, so the only real data obtainable is the harvester's own
+  // output against locally generated agents (alice/bob/carol) all connecting
+  // over loopback. That is also why every source address is 127.0.0.1 and
+  // every authority is localhost:8088 -- it is a single-host demo run, not
+  // wide-area traffic. Panels with nothing to show say so, and why, rather
+  // than being filled with invented rows.
+  const RAW = [
+    {"ts":1792590051.1402094,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":true,"reason":"verified","keyid":"hWJ_pxD_X35pk309_BQreSAjQBPZly0_rR-KxwzAVKQ","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/alice","user_agent":"alice-bot/1.0"},
+    {"ts":1792590051.1464913,"remote_addr":"127.0.0.1","path":"/products","authority":"localhost:8088","verified":true,"reason":"verified","keyid":"hWJ_pxD_X35pk309_BQreSAjQBPZly0_rR-KxwzAVKQ","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/alice","user_agent":"alice-bot/1.0"},
+    {"ts":1792590051.1511645,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":true,"reason":"verified","keyid":"Khl9y9GCWmYqmk88pgg6_N5VP4h_phkPxOgmd7-KKc8","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/bob","user_agent":"bobcrawler/2.1"},
+    {"ts":1792590051.1556053,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":true,"reason":"verified","keyid":"Khl9y9GCWmYqmk88pgg6_N5VP4h_phkPxOgmd7-KKc8","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/bob","user_agent":"bobcrawler/2.1"},
+    {"ts":1792590051.1598823,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":true,"reason":"verified","keyid":"gkb-NU26SElruUAhqE1LxRGSXhNf_B4L3slHziwbqtE","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/carol","user_agent":"carolagent/0.9"},
+    {"ts":1792590051.163694,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":false,"reason":"replay: signature already used","keyid":"gkb-NU26SElruUAhqE1LxRGSXhNf_B4L3slHziwbqtE","alg":"ed25519","tag":"web-bot-auth","created":1792590051,"expires":1792590111,"signature_agent":"http://localhost:8088/carol","user_agent":"carolagent/0.9"},
+    {"ts":1792590051.1672022,"remote_addr":"127.0.0.1","path":"/","authority":"localhost:8088","verified":false,"reason":"unsigned","keyid":null,"alg":null,"tag":null,"created":null,"expires":null,"signature_agent":null,"user_agent":"genericcrawler/1.0"},
+    {"ts":1792590051.1709998,"remote_addr":"127.0.0.1","path":"/products","authority":"localhost:8088","verified":false,"reason":"unsigned","keyid":null,"alg":null,"tag":null,"created":null,"expires":null,"signature_agent":null,"user_agent":"genericcrawler/1.0"},
+    {"ts":1792590051.1748018,"remote_addr":"127.0.0.1","path":"/whoami","authority":"localhost:8088","verified":false,"reason":"unsigned","keyid":null,"alg":null,"tag":null,"created":null,"expires":null,"signature_agent":null,"user_agent":"genericcrawler/1.0"}
+  ];
+  // S and the aggregates are (re)computed by init() once the data is in
+  // hand, so the page can be pointed at the connector's export-json output
+  // (published beside it as harvest.json) and fall back to the embedded
+  // snapshot above if that file isn't present.
+  let S = [], SOURCE_LABEL = "";
+  let ATTR = new Set();
+  const isAttr = (k) => ATTR.has(k);
+  let opClusters = [], ipClusters = [], siteClusters = [];
+  let agents = [], claims = [], crossSite = [];
+  let totalSightings = 0, unsignedCount = 0, replayAttempts = 0, verificationRate = 0;
+
+  function computeAggregates() {
+    ATTR = new Set(S.filter((s) => s.verified && s.keyid).map((s) => s.keyid));
+    const verifiedRows = S.filter((s) => s.verified && s.keyid);
+    opClusters = groupDistinct(verifiedRows, (r) => r.signature_agent);
+    ipClusters = groupDistinct(verifiedRows, (r) => r.remote_addr);
+    siteClusters = groupDistinct(verifiedRows, (r) => r.authority);
+    agents = [...ATTR].map(agent);
+    claims = uniq(S.filter((s) => s.keyid && !isAttr(s.keyid)).map((s) => s.keyid)).map(agent);
+    crossSite = agents.filter((a) => a.authorities.length > 1);
+    totalSightings = S.length;
+    unsignedCount = S.filter((s) => !s.keyid).length;
+    replayAttempts = S.filter((s) => (s.reason || "").startsWith("replay")).length;
+    const rateRows = S.filter((s) => s.reason !== "directory fetch");
+    verificationRate = rateRows.length ? rateRows.filter((r) => r.verified).length / rateRows.length : 0;
+  }
+
+  function agent(keyid) {
+    const rows = S.filter((s) => s.keyid === keyid).sort((a, b) => a.ts - b.ts);
+    const vr = rows.filter((r) => r.verified);
+    return {
+      keyid, rows,
+      n: rows.length, verified: vr.length, rejected: rows.length - vr.length,
+      first: Math.min(...rows.map((r) => r.ts)), last: Math.max(...rows.map((r) => r.ts)),
+      tags: uniq(rows.map((r) => r.tag).filter(Boolean)),
+      paths: uniq(rows.map((r) => r.path)),
+      authorities: uniq(vr.map((r) => r.authority)),
+      operators: uniq(rows.map((r) => r.signature_agent).filter(Boolean)),
+      ips: uniq(rows.map((r) => r.remote_addr)),
+      attributable: isAttr(keyid),
+    };
+  }
+
+  const groupDistinct = (rows, keyFn) => {
+    const m = {};
+    for (const r of rows) { const g = keyFn(r); if (g == null) continue; (m[g] = m[g] || new Set()).add(r.keyid); }
+    return Object.entries(m).map(([k, set]) => [k, set.size]).sort((a, b) => b[1] - a[1]);
+  };
+
+  // ---- formatting ----
+  const fmtTime = (ts) => new Date(ts * 1000).toISOString().slice(11, 19) + "Z";
+  const host = (url) => { try { return esc(String(url).replace(/^https?:\/\//, "")); } catch (e) { return esc(url); } };
+  const shortKey = (k, n) => k.length > (n || 18) ? k.slice(0, n || 18) + "…" : k;
+  const reasonPill = (r) => {
+    if (r === "verified") return '<span class="pill ok">verified</span>';
+    if (r === "directory fetch") return '<span class="pill neutral">directory</span>';
+    if (r === "unsigned") return '<span class="pill neutral">unsigned</span>';
+    if ((r || "").startsWith("replay")) return '<span class="pill bad">replay</span>';
+    return '<span class="pill bad">rejected</span>';
+  };
+
+  // ---- state ----
+  const state = { tab: "agents", sel: null, q: "", sort: "last" };
+  const SORTS = { last: "last seen", requests: "requests", sites: "sites", verified: "verified" };
+
+  // ---- rendering ----
+  function renderProvenance() {
+    const live = SOURCE_LABEL.indexOf("harvest.json") !== -1;
+    byId("provenance").innerHTML =
+      `<b>Real data.</b> ${S.length} sightings loaded from the connector's <code>export-json</code> output (<code>${esc(SOURCE_LABEL)}</code>) — the actual contents of the harvest store, with real ed25519 keys and real verified signatures, no placeholder rows. ` +
+      (live
+        ? `Re-run <code>python -m connector export-json</code> and republish the file to refresh this view.`
+        : `The exported file wasn't reachable, so this is the embedded fallback snapshot from a <code>python demo.py</code> run.`);
+  }
+
+  function renderSignals() {
+    const cards = [
+      ["Total sightings", totalSightings, ""],
+      ["Attributable agents", agents.length, "good"],
+      ["Unsigned", unsignedCount, ""],
+      ["Verification rate", (verificationRate * 100).toFixed(0) + "%", ""],
+      ["Replay attempts", replayAttempts, replayAttempts ? "bad" : ""],
+      ["Claimed only", claims.length, claims.length ? "bad" : ""],
+    ];
+    byId("signals").innerHTML = cards.map(([k, v, cls]) =>
+      `<div class="stat"><div class="k">${esc(k)}</div><div class="v ${cls}">${esc(v)}</div></div>`).join("");
+  }
+
+  function sigPanel(title, hint, items, emptyReason) {
+    const body = items.length ? items.map((it) =>
+      `<div class="sig-item" data-go="${esc(it.type)}:${esc(it.id)}">
+        <span class="lbl">${esc(it.label)}</span>
+        <span class="count-badge ${it.flag ? "flag" : ""}">${esc(it.count)}</span>
+      </div>`).join("") : `<div class="empty-reason">${esc(emptyReason)}</div>`;
+    return `<div class="panel"><h3>${esc(title)} <span class="hint">${esc(hint)}</span></h3>${body}</div>`;
+  }
+
+  function renderClusters() {
+    const cs = crossSite.map((a) => ({ type: "agent", id: a.keyid, label: shortKey(a.keyid, 16), count: a.authorities.length + " sites", flag: true }));
+    const ops = opClusters.filter(([, n]) => n > 1).map(([op, n]) => ({ type: "operator", id: op, label: host(op), count: n + " keys", flag: n > 2 }));
+    const ips = ipClusters.filter(([, n]) => n > 1).map(([ip, n]) => ({ type: "address", id: ip, label: ip, count: n + " keys", flag: n > 2 }));
+    byId("clusters").innerHTML =
+      sigPanel("Cross-site reuse", "same key, many sites", cs,
+        "No key signed for more than one site. The three agents each visited only localhost:8088, so there is no cross-site reuse to show in this run.") +
+      sigPanel("Operator clusters", "one Signature-Agent, many keys", ops,
+        "Each agent published its own Signature-Agent, so no operator fielded more than one key here.") +
+      sigPanel("Address clusters", "one source IP, many keys", ips,
+        "No address carried more than one key.");
+  }
+
+  function renderSorts() {
+    const el = byId("sorts");
+    if (state.tab !== "agents") { el.innerHTML = ""; return; }
+    el.innerHTML = Object.entries(SORTS).map(([k, lbl]) =>
+      `<button class="sort-btn" data-sort="${k}" aria-pressed="${state.sort === k}">${esc(lbl)}</button>`).join("");
+  }
+
+  function matches(text) { return !state.q || String(text).toLowerCase().includes(state.q.toLowerCase()); }
+
+  function renderList() {
+    const rowsEl = byId("rows");
+    const titleEl = byId("listTitle");
+    let html = "", emptyMsg = "No matches.";
+
+    if (state.tab === "agents") {
+      titleEl.textContent = "Attributable agents";
+      let list = agents.filter((a) => matches(a.keyid) || matches(a.operators.join(" ")) || matches(a.rows.map((r) => r.user_agent).join(" ")));
+      const s = state.sort;
+      list.sort((a, b) => s === "requests" ? b.n - a.n : s === "sites" ? b.authorities.length - a.authorities.length : s === "verified" ? b.verified - a.verified : b.last - a.last);
+      html = list.map((a) => `
+        <div class="row" data-go="agent:${esc(a.keyid)}" aria-current="${state.sel === "agent:" + a.keyid}">
+          <div class="grow">
+            <div class="id">${esc(shortKey(a.keyid, 22))}</div>
+            <div class="meta">${host(a.operators[0] || "—")} · ${esc(uniq(a.rows.map((r) => r.user_agent))[0] || "")} · last ${fmtTime(a.last)}</div>
+          </div>
+          <div class="right">
+            <div>${a.authorities.length > 1 ? '<span class="pill warn">' + a.authorities.length + ' sites</span>' : '<span class="pill neutral">' + a.authorities.length + ' site</span>'}</div>
+            <div class="meta num">${esc(a.verified)}/${esc(a.n)} ok</div>
+          </div>
+        </div>`).join("");
+    } else if (state.tab === "operators") {
+      titleEl.textContent = "Operators (Signature-Agent)";
+      const list = opClusters.filter(([op]) => matches(op));
+      html = list.map(([op, n]) => `
+        <div class="row" data-go="operator:${esc(op)}" aria-current="${state.sel === "operator:" + op}">
+          <div class="grow"><div class="id">${host(op)}</div><div class="meta">operator origin</div></div>
+          <div class="right"><span class="count-badge ${n > 2 ? "flag" : ""}">${esc(n)} key${n > 1 ? "s" : ""}</span></div>
+        </div>`).join("");
+    } else if (state.tab === "addresses") {
+      titleEl.textContent = "Source addresses";
+      const list = ipClusters.filter(([ip]) => matches(ip));
+      html = list.map(([ip, n]) => `
+        <div class="row" data-go="address:${esc(ip)}" aria-current="${state.sel === "address:" + ip}">
+          <div class="grow"><div class="id">${esc(ip)}</div><div class="meta">remote address</div></div>
+          <div class="right"><span class="count-badge ${n > 2 ? "flag" : ""}">${esc(n)} key${n > 1 ? "s" : ""}</span></div>
+        </div>`).join("");
+    } else if (state.tab === "sites") {
+      titleEl.textContent = "Sites (authority)";
+      const list = siteClusters.filter(([a]) => matches(a));
+      html = list.map(([auth, n]) => `
+        <div class="row" data-go="site:${esc(auth)}" aria-current="${state.sel === "site:" + auth}">
+          <div class="grow"><div class="id">${esc(auth)}</div><div class="meta">signed authority</div></div>
+          <div class="right"><span class="count-badge">${esc(n)} agent${n > 1 ? "s" : ""}</span></div>
+        </div>`).join("");
+    } else if (state.tab === "claims") {
+      titleEl.textContent = "Claimed identities — never verified";
+      const list = claims.filter((a) => matches(a.keyid) || matches(a.operators.join(" ")));
+      html = list.map((a) => `
+        <div class="row" data-go="agent:${esc(a.keyid)}" aria-current="${state.sel === "agent:" + a.keyid}">
+          <div class="grow"><div class="id">${esc(shortKey(a.keyid, 22))}</div>
+            <div class="meta">${host(a.operators[0] || "—")} · ${esc(a.rows[0].reason)}</div></div>
+          <div class="right"><span class="pill claim">claim</span></div>
+        </div>`).join("");
+      emptyMsg = "No identity was presented that failed to verify at least once. The only non-verified rows in this run are unsigned traffic (no keyid at all) and one replay of carol's own signature — and carol is already an attributable agent, so nothing lands here.";
+    }
+    rowsEl.innerHTML = html || `<div class="empty">${esc(emptyMsg)}</div>`;
+  }
+
+  function detailAgent(keyid) {
+    const a = agent(keyid);
+    const kicker = a.attributable ? '<span class="pill ok">attributable agent</span>' : '<span class="pill claim">unverified claim</span>';
+    const reuseNote = a.authorities.length > 1
+      ? `<div class="note warn">Same key presented at ${a.authorities.length} unrelated sites — trivially linkable across them by anyone comparing logs.</div>` : "";
+    const claimNote = !a.attributable
+      ? `<div class="note claim">This keyid has never verified. It is a presented claim, not an established agent.</div>` : "";
+    const chip = (type, id, label) => `<span class="chip link" data-go="${esc(type)}:${esc(id)}">${esc(label)}</span>`;
+    const kv = [["requests", a.n], ["verified", a.verified], ["rejected", a.rejected], ["sites", a.authorities.length]]
+      .map(([k, v]) => `<div class="cell"><div class="k">${k}</div><div class="val">${esc(v)}</div></div>`).join("");
+    const tl = a.rows.map((r) => `
+      <div class="tl-row">
+        <span class="t">${fmtTime(r.ts)}</span>
+        <span class="p">${esc(r.method)} ${esc(r.authority)}${esc(r.path)}</span>
+        ${reasonPill(r.reason)}
+      </div>
+      ${r.reason !== "verified" && r.reason !== "directory fetch" ? `<div class="tl-row"><span class="t"></span><span class="reason">↳ ${esc(r.reason)}</span></div>` : ""}`).join("");
+    return `
+      <div class="dhead"><div class="dkicker">${kicker}${a.attributable && a.authorities.length > 1 ? '<span class="pill warn">cross-site</span>' : ""}</div>
+        <div class="did">${esc(a.keyid)}</div></div>
+      <div class="dbody">
+        ${reuseNote}${claimNote}
+        <div class="kv">${kv}</div>
+        <div><div class="section-lbl">Operator (Signature-Agent)</div><div class="chips">${a.operators.length ? a.operators.map((o) => chip("operator", o, host(o))).join("") : '<span class="chip static">—</span>'}</div></div>
+        <div><div class="section-lbl">Sites signed for</div><div class="chips">${a.authorities.length ? a.authorities.map((au) => chip("site", au, au)).join("") : '<span class="chip static">none verified</span>'}</div></div>
+        <div><div class="section-lbl">Source addresses</div><div class="chips">${a.ips.map((ip) => chip("address", ip, ip)).join("")}</div></div>
+        <div><div class="section-lbl">Declared tag · user-agent</div><div class="chips">${a.tags.map((t) => `<span class="chip static">${esc(t)}</span>`).join("") || '<span class="chip static">—</span>'}${uniq(a.rows.map((r) => r.user_agent).filter(Boolean)).map((u) => `<span class="chip static">${esc(u)}</span>`).join("")}</div></div>
+        <div><div class="section-lbl">Sighting timeline (${a.n})</div><div class="timeline">${tl}</div></div>
+      </div>`;
+  }
+
+  function detailCollection(kicker, id, note, members) {
+    const chip = (a) => `<div class="row" data-go="agent:${esc(a.keyid)}">
+        <div class="grow"><div class="id">${esc(shortKey(a.keyid, 22))}</div>
+          <div class="meta">${esc(a.verified)}/${esc(a.n)} ok · ${a.authorities.length} site${a.authorities.length === 1 ? "" : "s"}</div></div>
+        <div class="right">${a.attributable ? '<span class="pill ok">agent</span>' : '<span class="pill claim">claim</span>'}</div>
+      </div>`;
+    return `
+      <div class="dhead"><div class="dkicker">${esc(kicker)}</div><div class="did">${esc(id)}</div></div>
+      <div class="dbody">
+        ${note ? `<div class="note ${note.cls || ""}">${note.text}</div>` : ""}
+        <div><div class="section-lbl">${members.length} ${members.length === 1 ? "identity" : "identities"} here</div>
+          <div class="timeline" style="border:0">${members.map(chip).join("")}</div></div>
+      </div>`;
+  }
+
+  function renderDetail() {
+    const el = byId("detail");
+    if (!state.sel) {
+      el.innerHTML = '<div class="detail-empty"><div class="big">⬚</div>Select an agent, operator, address, or site to inspect it. Use 🎲 to land on one at random.</div>';
+      return;
+    }
+    const [type, ...rest] = state.sel.split(":"); const id = rest.join(":");
+    if (type === "agent") { el.innerHTML = detailAgent(id); return; }
+    if (type === "operator") {
+      const members = [...agents, ...claims].filter((a) => a.operators.includes(id));
+      const n = members.filter((m) => m.attributable).length;
+      const note = n > 1 ? { cls: "warn", text: `<b>${n} distinct keys</b> operate under this one origin across ${uniq(members.flatMap((m) => m.ips)).length} source address(es). The per-address Sybil check would read that as a spread; grouping by operator collapses it to one actor.` } : { text: `One key uses this origin in this run.` };
+      el.innerHTML = detailCollection("operator origin", host(id), note, members); return;
+    }
+    if (type === "address") {
+      const members = [...agents, ...claims].filter((a) => a.ips.includes(id));
+      const n = members.filter((m) => m.attributable).length;
+      const note = n > 2 ? { cls: "warn", text: `<b>${n} distinct identities</b> trace to this single address. Here that is because the demo agents all connect over loopback; in the wild, many keys from one address is the cheap-keygen Sybil pattern (ed25519 keys cost nothing to mint).` } : null;
+      el.innerHTML = detailCollection("source address", id, note, members); return;
+    }
+    if (type === "site") {
+      const members = agents.filter((a) => a.authorities.includes(id));
+      el.innerHTML = detailCollection("signed authority", id, { text: `${members.length} attributable agent${members.length === 1 ? "" : "s"} verified against this site.` }, members); return;
+    }
+  }
+
+  function render() {
+    [...byId("tabs").children].forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === state.tab));
+    renderSorts(); renderList(); renderDetail();
+  }
+
+  function renderFooter() {
+    byId("footer").innerHTML =
+      "Aggregates mirror <code>analytics.py</code>: attribution requires at least one verified sighting, and the verification rate excludes directory-fetch housekeeping. " +
+      "Harvested fields (keyid, tag, user-agent) are HTML-escaped before display. " +
+      "To widen this beyond loopback you would point the explorer at a harvest DB from a real deployment — the shape is identical, only the rows differ.";
+  }
+
+  // ---- events ----
+  document.addEventListener("click", (e) => {
+    const go = e.target.closest("[data-go]");
+    if (go) { state.sel = go.dataset.go; render(); return; }
+    const sort = e.target.closest("[data-sort]");
+    if (sort) { state.sort = sort.dataset.sort; render(); return; }
+    const tab = e.target.closest("[data-tab]");
+    if (tab) { state.tab = tab.dataset.tab; render(); return; }
+  });
+  byId("search").addEventListener("input", (e) => { state.q = e.target.value; renderList(); });
+  byId("randBtn").addEventListener("click", () => {
+    if (!agents.length) return;
+    const a = agents[Math.floor(Math.random() * agents.length)];
+    state.tab = "agents"; state.sel = "agent:" + a.keyid; byId("search").value = ""; state.q = ""; render();
+    const cur = byId("rows").querySelector('[aria-current="true"]'); if (cur) cur.scrollIntoView({ block: "nearest" });
+  });
+  byId("themeBtn").addEventListener("click", () => {
+    const root = document.documentElement;
+    const dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && matchMedia("(prefers-color-scheme: dark)").matches);
+    root.setAttribute("data-theme", dark ? "light" : "dark");
+  });
+
+  function init(rows, label) {
+    S = (rows || []).map((r) => Object.assign({ method: "GET" }, r));
+    SOURCE_LABEL = label;
+    state.sel = null; state.tab = "agents"; state.q = "";
+    computeAggregates();
+    renderProvenance(); renderSignals(); renderClusters(); renderFooter(); render();
+  }
+
+  // Point the explorer at the connector's export-json output, published
+  // alongside this page as harvest.json. If it isn't reachable (opened
+  // standalone, or not yet published), fall back to the embedded snapshot.
+  fetch("harvest.json", { cache: "no-store" })
+    .then((r) => { if (!r.ok) throw new Error("no file"); return r.json(); })
+    .then((rows) => init(rows, "harvest.json"))
+    .catch(() => init(RAW, "embedded fallback snapshot"));
+})();
+</script>
