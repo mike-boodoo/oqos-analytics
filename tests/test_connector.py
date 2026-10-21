@@ -19,7 +19,7 @@ from connector.sources import (
 from connector.writer import IngestWriter
 from connector.export import export_sightings
 from connector.webhook import ingest_body, run_webhook
-from connector import mcp_server
+from connector import correlate, mcp_server
 
 
 # ---- a real, signed Signature-Input (shape the verifier emits) -----------
@@ -206,6 +206,77 @@ def test_webhook_server_round_trip_with_token(isolated_store):
     finally:
         httpd.shutdown(); httpd.server_close()
     assert analytics.unique_agents() == 1
+
+
+# ---- correlation capture + reconciliation (co-agency) --------------------
+def _sig_input_for(keyid):
+    return (f'sig1=("@authority");alg="ed25519";keyid="{keyid}";'
+            f'created=1792590051;expires=1792590111;tag="web-bot-auth"')
+
+
+def _exchange(keyid, tx, ts, path="/whoami"):
+    """A record from an isolated agent that carried a third-party id `tx`."""
+    return {"ts": ts, "remote_addr": "203.0.113.5", "method": "GET", "path": path,
+            "host": "third-party.example", "user_agent": keyid + "/1.0",
+            "signature_input": _sig_input_for(keyid), "signature": "sig1=:QUJD:",
+            "tx": tx, "verified": True}
+
+
+def _corr_fm():
+    return FieldMap(verified="verified", correlation="tx", source="generic")
+
+
+def test_two_isolated_agents_join_on_shared_third_party_id(isolated_store):
+    # Developer A and Developer B never coordinate; both touch the same third
+    # party, which reuses tx 99823 across both exchanges.
+    w = IngestWriter()
+    w.ingest(StreamSource([_exchange("AGENT_A", "99823", 1792590051)], field_map=_corr_fm()), source_name="A")
+    w.ingest(StreamSource([_exchange("AGENT_B", "99823", 1792590060)], field_map=_corr_fm()), source_name="B")
+
+    r = correlate.reconcile("99823")
+    assert r["participant_count"] == 2 and r["co_agency"] is True
+    assert {p["keyid"] for p in r["participants"]} == {"AGENT_A", "AGENT_B"}
+    # neither agent is a trusted anchor, so the link is observed, not attested
+    assert r["attested"] is False and r["attested_by"] == []
+
+
+def test_attested_when_a_trusted_anchor_signed_the_id(isolated_store):
+    w = IngestWriter(trusted_signers={"third-party-root"})
+    w.ingest(StreamSource([_exchange("AGENT_A", "99823", 1792590051)], field_map=_corr_fm()), source_name="A")
+    # the third party itself signs an exchange carrying the same id
+    w.ingest(StreamSource([_exchange("third-party-root", "99823", 1792590070)], field_map=_corr_fm()), source_name="tp")
+
+    r = correlate.reconcile("99823")
+    assert r["attested"] is True and r["attested_by"] == ["third-party-root"]
+    assert r["participant_count"] == 2
+
+
+def test_correlation_capture_is_idempotent(isolated_store):
+    batch = [_exchange("AGENT_A", "99823", 1792590051)]
+    w = IngestWriter()
+    w.ingest(StreamSource(list(batch), field_map=_corr_fm()), source_name="A")
+    w.ingest(StreamSource(list(batch), field_map=_corr_fm()), source_name="A")  # replay
+    r = correlate.reconcile("99823")
+    assert r["rows"] == 1  # one correlation row, not two
+
+
+def test_list_correlations_surfaces_only_co_agency(isolated_store):
+    w = IngestWriter()
+    w.ingest(StreamSource([_exchange("AGENT_A", "shared", 1), _exchange("AGENT_B", "shared", 2),
+                           _exchange("AGENT_A", "solo", 3)], field_map=_corr_fm()), source_name="A")
+    co = correlate.list_correlations(min_participants=2)
+    ids = {c["corr_id"]: c for c in co}
+    assert "shared" in ids and ids["shared"]["participant_count"] == 2
+    assert "solo" not in ids  # only one participant → not co-agency
+
+
+def test_no_correlation_field_means_no_rows(isolated_store):
+    # a plain ingest with no correlation path configured writes no correlation rows
+    w = IngestWriter()
+    rec = {"ts": 1, "host": "x", "path": "/", "signature_input": _sig_input_for("A"),
+           "signature": "sig1=:QUJD:", "verified": True}
+    w.ingest(StreamSource([rec], field_map=FieldMap(verified="verified")), source_name="A")
+    assert correlate.list_correlations() == []
 
 
 # ---- MCP server surface --------------------------------------------------

@@ -14,7 +14,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from . import store
+from . import correlate, store
 from .normalize import normalize, sig_fields_of
 from .sources import Source
 
@@ -29,14 +29,17 @@ CREATE TABLE IF NOT EXISTS ingest_cursor (
     cursor TEXT,
     updated REAL
 );
-"""
+""" + correlate.CORRELATIONS_SCHEMA
 
 
 class IngestWriter:
-    def __init__(self, db_path: str | None = None):
+    def __init__(self, db_path: str | None = None, trusted_signers=None):
         # None -> resolve analytics.DB_PATH lazily at each call, so tests
         # that monkeypatch it (and the CLI's --db) are both honoured.
         self._db_path = db_path
+        # keyids trusted as third-party anchors: a correlation id seen on an
+        # exchange signed by one of these is marked 'attested' (see correlate).
+        self.trusted_signers = set(trusted_signers or ())
 
     @property
     def db_path(self) -> str:
@@ -76,6 +79,8 @@ class IngestWriter:
             "INSERT INTO ingest_seen (fingerprint, source, ts) VALUES (?,?,?)",
             (fp, row.get("_source"), row["ts"]),
         )
+        if row.get("_correlation_id"):
+            correlate.record(c, fp, row["_correlation_id"], row, self.trusted_signers)
         c.commit()
         return True
 

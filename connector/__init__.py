@@ -34,6 +34,7 @@ from .sources import (
 from .writer import IngestWriter
 from .export import export_sightings, write_export
 from .webhook import run_webhook, ingest_body
+from .correlate import reconcile, list_correlations
 
 __all__ = [
     "normalize", "RawRecord", "CANON_COLUMNS",
@@ -41,4 +42,5 @@ __all__ = [
     "CloudflareSource", "StreamSource", "IngestWriter",
     "export_sightings", "write_export",
     "run_webhook", "ingest_body",
+    "reconcile", "list_correlations",
 ]

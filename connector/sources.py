@@ -94,12 +94,14 @@ class FieldMap:
     signature_agent: str = "signature_agent"
     verified: str | None = None       # key holding an upstream bool verdict
     reason: str | None = None
+    correlation: str | None = None    # key holding a third-party correlation id
     source: str = "json"
 
     def record(self, obj: dict) -> RawRecord:
         verdict = _dig(obj, self.verified) if self.verified else None
         if isinstance(verdict, str):
             verdict = verdict.strip().lower() in ("1", "true", "yes", "verified", "ok")
+        corr = _dig(obj, self.correlation) if self.correlation else None
         return RawRecord(
             ts=to_epoch(_dig(obj, self.ts)),
             remote_addr=_dig(obj, self.remote_addr),
@@ -112,6 +114,7 @@ class FieldMap:
             signature_agent=_dig(obj, self.signature_agent),
             verified=verdict,
             reason=_dig(obj, self.reason) if self.reason else None,
+            correlation_id=(None if corr is None else str(corr)),
             source=self.source,
             extra=obj,
         )

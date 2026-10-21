@@ -19,7 +19,7 @@ import json
 import sys
 from dataclasses import fields as _dc_fields
 
-from . import store
+from . import correlate, store
 from .export import export_sightings, write_export
 from .sources import (
     FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource, StreamSource,
@@ -57,27 +57,40 @@ def _stdin_ndjson():
             yield json.loads(line)
 
 
+def _with_corr(fm, args):
+    """Apply a --correlation path override to a field map."""
+    if getattr(args, "correlation", None):
+        fm.correlation = args.correlation
+    return fm
+
+
+def _trusted(args):
+    s = getattr(args, "trusted_signers", None)
+    return {k.strip() for k in s.split(",") if k.strip()} if s else set()
+
+
 def _build_source(args):
     if args.source == "access-log":
         if args.path and args.path.endswith((".json", ".jsonl", ".ndjson")):
-            return JsonRecordSource(path=args.path, field_map=FieldMap.nginx_json())
+            return JsonRecordSource(path=args.path, field_map=_with_corr(FieldMap.nginx_json(), args))
         return CombinedLogSource(path=args.path, authority=args.authority)
     if args.source == "cloudflare":
-        return CloudflareSource(path=args.path, url=args.url, token=args.token)
+        return CloudflareSource(path=args.path, url=args.url, token=args.token,
+                                field_map=_with_corr(FieldMap.cloudflare(), args))
     if args.source == "generic":
-        fm = _field_map_from_arg(args.map, FieldMap(source="generic"))
+        fm = _with_corr(_field_map_from_arg(args.map, FieldMap(source="generic")), args)
         if args.path in (None, "-"):
             return StreamSource(_stdin_ndjson(), field_map=fm)
         return JsonRecordSource(path=args.path, field_map=fm)
     if args.source == "stream":
-        fm = _field_map_from_arg(args.map, FieldMap(source="stream"))
+        fm = _with_corr(_field_map_from_arg(args.map, FieldMap(source="stream")), args)
         return StreamSource(_stdin_ndjson(), field_map=fm)
     raise SystemExit(f"unknown source: {args.source}")
 
 
 def cmd_ingest(args):
     _apply_db(args.db)
-    writer = IngestWriter(db_path=args.db)
+    writer = IngestWriter(db_path=args.db, trusted_signers=_trusted(args))
     result = writer.ingest(_build_source(args), source_name=args.source)
     print(json.dumps({"source": args.source, **result}, indent=2))
 
@@ -110,6 +123,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--token", help="cloudflare: bearer token for --url")
         sp.add_argument("--authority", help="access-log: Host to attribute (combined logs omit it)")
         sp.add_argument("--map", help="generic: field overrides, e.g. ts=time,remote_addr=ip")
+        sp.add_argument("--correlation", help="path to a third-party correlation id, e.g. tx_id or RequestHeaders.content-digest")
+        sp.add_argument("--trusted-signers", help="comma-separated keyids trusted as third-party anchors (mark correlations 'attested')")
 
     ing = sub.add_parser("ingest", help="ingest from a source (one pass)")
     add_source_args(ing)
@@ -123,6 +138,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     st = sub.add_parser("status", help="show ingest state")
     st.set_defaults(func=cmd_status)
+
+    rc = sub.add_parser("reconcile", help="join all streams sharing one correlation id")
+    rc.add_argument("--id", required=True, help="the correlation id to reconcile")
+    rc.set_defaults(func=cmd_reconcile)
+
+    co = sub.add_parser("correlations", help="list correlation ids and their participants")
+    co.add_argument("--min-participants", type=int, default=1, help="only ids seen by >= N participants (2 = co-agency)")
+    co.add_argument("--attested-only", action="store_true", help="only ids vouched by a trusted anchor")
+    co.set_defaults(func=cmd_correlations)
 
     ex = sub.add_parser("export-json", help="dump sightings as explorer/dashboard JSON")
     ex.add_argument("--out", help="write here (default: stdout)")
@@ -145,13 +169,25 @@ def cmd_webhook(args):
                 db_path=args.db, path=args.path)
 
 
+def cmd_reconcile(args):
+    _apply_db(args.db)
+    print(json.dumps(correlate.reconcile(args.id, db_path=args.db), indent=2, default=str))
+
+
+def cmd_correlations(args):
+    _apply_db(args.db)
+    print(json.dumps(correlate.list_correlations(
+        db_path=args.db, min_participants=args.min_participants,
+        attested_only=args.attested_only), indent=2, default=str))
+
+
 def cmd_poll(args):
     """Daemon mode: rebuild the source each cycle (re-fetching a URL/file) and
     ingest; the idempotent fingerprint means already-seen rows are skipped, so
     re-fetching an overlapping window is safe."""
     import time
     _apply_db(args.db)
-    writer = IngestWriter(db_path=args.db)
+    writer = IngestWriter(db_path=args.db, trusted_signers=_trusted(args))
     while True:
         try:
             result = writer.ingest(_build_source(args), source_name=args.source)

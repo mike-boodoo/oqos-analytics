@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import sys
 
-from . import store
+from . import correlate, store
 from .export import export_sightings
 from .normalize import normalize, RawRecord
 from .sources import FieldMap, JsonRecordSource, CombinedLogSource, CloudflareSource
@@ -67,6 +67,25 @@ TOOLS = [
             "properties": {"limit": {"type": "integer"}, "db": {"type": "string"}},
         },
     },
+    {
+        "name": "reconcile",
+        "description": "Join all streams sharing one third-party correlation id; reports participants "
+                       "and whether the link is attested by a trusted anchor.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "db": {"type": "string"}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "list_correlations",
+        "description": "List correlation ids and participant counts; min_participants=2 surfaces co-agency.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"min_participants": {"type": "integer"},
+                           "attested_only": {"type": "boolean"}, "db": {"type": "string"}},
+        },
+    },
 ]
 
 
@@ -78,22 +97,34 @@ def _apply_db(args):
 def _tool_ingest(args):
     _apply_db(args)
     src = args["source"]
+    corr = args.get("correlation")
     if src == "access-log":
         path = args.get("path", "")
-        source = (JsonRecordSource(path=path, field_map=FieldMap.nginx_json())
-                  if path.endswith((".json", ".jsonl", ".ndjson"))
-                  else CombinedLogSource(path=path, authority=args.get("authority")))
+        if path.endswith((".json", ".jsonl", ".ndjson")):
+            fm = FieldMap.nginx_json()
+            if corr:
+                fm.correlation = corr
+            source = JsonRecordSource(path=path, field_map=fm)
+        else:
+            source = CombinedLogSource(path=path, authority=args.get("authority"))
     elif src == "cloudflare":
-        source = CloudflareSource(path=args.get("path"), url=args.get("url"), token=args.get("token"))
+        fm = FieldMap.cloudflare()
+        if corr:
+            fm.correlation = corr
+        source = CloudflareSource(path=args.get("path"), url=args.get("url"),
+                                  token=args.get("token"), field_map=fm)
     elif src == "generic":
         fm = FieldMap(source="generic")
         for k, v in (args.get("field_map") or {}).items():
             if hasattr(fm, k):
                 setattr(fm, k, v)
+        if corr:
+            fm.correlation = corr
         source = JsonRecordSource(path=args.get("path"), field_map=fm)
     else:
         raise ValueError(f"unknown source: {src}")
-    return {"source": src, **IngestWriter(db_path=args.get("db")).ingest(source, source_name=src)}
+    writer = IngestWriter(db_path=args.get("db"), trusted_signers=args.get("trusted_signers") or ())
+    return {"source": src, **writer.ingest(source, source_name=src)}
 
 
 def _tool_status(args):
@@ -120,11 +151,25 @@ def _tool_export(args):
     return {"sightings": export_sightings(db_path=args.get("db"), limit=args.get("limit"))}
 
 
+def _tool_reconcile(args):
+    _apply_db(args)
+    return correlate.reconcile(args["id"], db_path=args.get("db"))
+
+
+def _tool_list_correlations(args):
+    _apply_db(args)
+    return {"correlations": correlate.list_correlations(
+        db_path=args.get("db"), min_participants=args.get("min_participants", 1),
+        attested_only=bool(args.get("attested_only")))}
+
+
 HANDLERS = {
     "ingest_logs": _tool_ingest,
     "connector_status": _tool_status,
     "preview_normalize": _tool_preview,
     "export_snapshot": _tool_export,
+    "reconcile": _tool_reconcile,
+    "list_correlations": _tool_list_correlations,
 }
 
 

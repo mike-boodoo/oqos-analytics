@@ -159,6 +159,33 @@ The same core is exposed as a dependency-light MCP server
 (`python -m connector.mcp_server`) with tools `ingest_logs`,
 `connector_status`, `preview_normalize`, and `export_snapshot`.
 
+### Co-agency: reconciling isolated agents on a third-party id
+
+Two agents built by different developers never coordinate, but when both
+interact with the same third-party service that service may reuse one
+identifier (a transaction id, a webhook hash) across both exchanges. Point
+the connector at that id and it can *join* the two otherwise-unrelated
+streams on the shared value — a correlation-id join, not coordination.
+
+```bash
+# capture a correlation id (a JSON field or header path) while ingesting
+python -m connector ingest --source generic --path devA.ndjson \
+  --map verified=verified --correlation tx_id
+# mark links vouched by a trusted anchor as "attested"
+python -m connector ingest --source cloudflare --url "$URL" --token "$T" \
+  --correlation RequestHeaders.content-digest --trusted-signers third-party-root
+
+python -m connector reconcile --id 99823        # who shares this id, attested?
+python -m connector correlations --min-participants 2   # the co-agency cases
+```
+
+Trust discipline: a shared id that only the agents wrote is a *claim* —
+anyone who saw it could stamp it (hypothesis H3). A correlation is only
+`attested` when some exchange carrying it was signed by a `--trusted-signers`
+anchor. Treat merely-observed links as candidates, not facts; drive
+automated reconciliation off attested ones. (Full `Content-Digest` / `;req`
+checkpoint verification is the planned next slice.)
+
 ### Running as a service
 
 `ingest` is a single pass; `poll` is the daemon form — it re-fetches a

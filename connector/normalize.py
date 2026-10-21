@@ -41,6 +41,10 @@ class RawRecord:
     # presence of a signature instead.
     verified: bool | None = None
     reason: str | None = None
+    # A third-party correlation id carried by this exchange (tx id, webhook
+    # hash, request-bound response), when the source captured one. The join
+    # key for co-agency; see correlate.py.
+    correlation_id: str | None = None
     source: str = "unknown"
     extra: dict = field(default_factory=dict)
 
@@ -114,9 +118,10 @@ def normalize(rec: RawRecord) -> dict:
         "expires": _to_int(fields.get("expires")),
         "signature_agent": rec.signature_agent,
         "user_agent": rec.user_agent,
-        # helpers for fingerprint(), stripped before DB insert
+        # helpers (leading underscore), stripped before DB insert
         "_signature": rec.signature,
         "_source": rec.source,
+        "_correlation_id": rec.correlation_id,
     }
     row["fingerprint"] = fingerprint(row)
     return row
